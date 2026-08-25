@@ -62,18 +62,18 @@ class JEPAModel(nn.Module):
 
     def encode_context(self, image: torch.Tensor) -> torch.Tensor:
         self._validate_images(image, "当前图像")
-        return self.context_encoder(image)
+        return torch.nn.functional.normalize(self.context_encoder(image), dim=1)
 
     @torch.no_grad()
     def encode_target(self, image: torch.Tensor) -> torch.Tensor:
         self._validate_images(image, "目标图像")
-        return self.target_encoder(image)
+        return torch.nn.functional.normalize(self.target_encoder(image), dim=1)
 
     def predict_from_context(self, context: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         if context.ndim != 2 or context.shape[1] != self.config.embedding_dim:
             raise ValueError("上下文 embedding 形状无效")
         self._validate_actions(actions, context.shape[0])
-        return self.predictor(torch.cat((context, actions.flatten(start_dim=1)), dim=1))
+        return torch.nn.functional.normalize(self.predictor(torch.cat((context, actions.flatten(start_dim=1)), dim=1)), dim=1)
 
     @torch.no_grad()
     def update_target_encoder(self, momentum: float) -> None:

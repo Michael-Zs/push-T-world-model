@@ -25,12 +25,15 @@ def collect_trajectories(
     trajectories: int = 5_000,
     steps: int = 12,
     seed: int = 7,
+    guided_fraction: float = 0.7,
 ) -> list[Trajectory]:
-    """使用局部随机数生成器采集可重复的随机探索轨迹。"""
+    """采集由接触导向策略与随机探索混合组成的可重复轨迹。"""
     if trajectories <= 0:
         raise ValueError("轨迹数量必须为正数")
     if steps <= 0:
         raise ValueError("每条轨迹步数必须为正数")
+    if not 0.0 <= guided_fraction <= 1.0:
+        raise ValueError("导向动作比例必须位于 0 到 1 之间")
     rng = np.random.default_rng(seed)
     result: list[Trajectory] = []
     for _ in range(trajectories):
@@ -38,7 +41,15 @@ def collect_trajectories(
         images = [env.reset()]
         actions: list[np.ndarray] = []
         for _ in range(steps):
-            action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+            if rng.random() < guided_fraction:
+                delta = env.state.object_position - env.state.pusher
+                distance = float(np.linalg.norm(delta))
+                direction = delta / max(distance, 1e-6)
+                action = direction * min(1.0, distance / env.config.max_action)
+                action = action + rng.normal(0.0, 0.18, size=2)
+                action = np.clip(action, -1.0, 1.0).astype(np.float32)
+            else:
+                action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
             image, _ = env.step(action)
             actions.append(action)
             images.append(image)

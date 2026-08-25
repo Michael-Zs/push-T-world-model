@@ -3,7 +3,7 @@ import math
 import torch
 
 from push_t_jepa.model import JEPAModel
-from push_t_jepa.train import load_checkpoint, save_checkpoint, train_epoch
+from push_t_jepa.train import jepa_loss, load_checkpoint, run_training, save_checkpoint, train_epoch
 
 
 def test_one_training_epoch_returns_finite_loss_and_checkpoint_round_trips(tmp_path):
@@ -19,3 +19,24 @@ def test_one_training_epoch_returns_finite_loss_and_checkpoint_round_trips(tmp_p
     loaded = load_checkpoint(path, JEPAModel())
     assert math.isfinite(loss)
     assert loaded["metrics"]["loss"] == loss
+
+
+def test_variance_regularization_penalizes_collapsed_embeddings():
+    collapsed_loss, collapsed_std = jepa_loss(torch.zeros(8, 64), torch.zeros(8, 64), variance_weight=1.0)
+    diverse = torch.randn(8, 64)
+    diverse_loss, diverse_std = jepa_loss(diverse, diverse, variance_weight=1.0)
+    assert collapsed_std < 0.02
+    assert collapsed_loss > diverse_loss
+
+
+def test_full_training_writes_best_checkpoint_and_history(tmp_path):
+    checkpoint = run_training(
+        output=tmp_path,
+        trajectories=4,
+        steps=8,
+        epochs=2,
+        batch_size=4,
+        seed=1,
+    )
+    assert checkpoint.is_file()
+    assert (tmp_path / "history.json").is_file()
