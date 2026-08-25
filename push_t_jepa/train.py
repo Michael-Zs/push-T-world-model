@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Iterable
 
@@ -86,8 +87,14 @@ def load_checkpoint(path: str | Path, model: JEPAModel, device: str = "cpu") -> 
     checkpoint = torch.load(source, map_location=device, weights_only=False)
     if not isinstance(checkpoint, dict) or "model_state" not in checkpoint:
         raise ValueError("检查点缺少模型参数")
-    model.load_state_dict(checkpoint["model_state"])
-    return {"config": checkpoint.get("config", {}), "metrics": checkpoint.get("metrics", {})}
+    incompatibility = model.load_state_dict(checkpoint["model_state"], strict=False)
+    missing_non_decoder = [key for key in incompatibility.missing_keys if not key.startswith("decoder.")]
+    if missing_non_decoder or incompatibility.unexpected_keys:
+        raise ValueError("检查点模型结构不兼容，缺少或包含未知参数")
+    decoder_available = not incompatibility.missing_keys
+    if not decoder_available:
+        warnings.warn("检查点不包含 decoder 参数：CEM 规划可继续，但 GIF 的预测解码栏未经训练；请重新训练以获得有效图像。", stacklevel=2)
+    return {"config": checkpoint.get("config", {}), "metrics": checkpoint.get("metrics", {}), "decoder_available": decoder_available}
 
 
 def _model_device(model: JEPAModel) -> torch.device:

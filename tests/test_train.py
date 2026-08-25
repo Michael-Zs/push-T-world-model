@@ -40,3 +40,12 @@ def test_full_training_writes_best_checkpoint_and_history(tmp_path):
     )
     assert checkpoint.is_file()
     assert (tmp_path / "history.json").is_file()
+
+
+def test_loading_pre_decoder_checkpoint_keeps_planning_weights(tmp_path):
+    legacy_model = JEPAModel()
+    state = {name: value for name, value in legacy_model.state_dict().items() if not name.startswith("decoder.")}
+    path = tmp_path / "legacy.pt"
+    torch.save({"model_state": state, "config": {}, "metrics": {}}, path)
+    info = load_checkpoint(path, JEPAModel())
+    assert info["decoder_available"] is False
