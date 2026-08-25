@@ -7,7 +7,9 @@ from typing import Iterable
 
 import torch
 from torch.nn import functional as functional
+from torch.utils.data import DataLoader
 
+from .dataset import PushTJEPADataset, collect_trajectories
 from .model import JEPAModel
 
 
@@ -81,3 +83,35 @@ def _batch_to_device(batch: dict[str, torch.Tensor], device: torch.device) -> tu
     if any(key not in batch for key in required):
         raise ValueError("训练批次缺少图像、动作或未来图像")
     return tuple(batch[key].to(device) for key in required)  # type: ignore[return-value]
+
+
+def run_smoke_training(output: str | Path, seed: int = 7) -> Path:
+    """以极小数据集完成一次 CPU 训练，供安装验证和演示使用。"""
+    torch.manual_seed(seed)
+    trajectories = collect_trajectories(trajectories=8, steps=8, seed=seed)
+    dataset = PushTJEPADataset(trajectories, horizon=4)
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    model = JEPAModel()
+    loss = train_epoch(model, loader, torch.optim.Adam(model.parameters(), lr=1e-3), 0.99)
+    checkpoint = Path(output) / "model.pt"
+    save_checkpoint(checkpoint, model, {"seed": seed, "mode": "smoke"}, {"loss": loss})
+    return checkpoint
+
+
+def main() -> None:
+    """提供 `python -m push_t_jepa.train --smoke` 命令。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="训练 CPU 优先的 Push-T JEPA 模型")
+    parser.add_argument("--smoke", action="store_true", help="运行极小数据集的 smoke 训练")
+    parser.add_argument("--output", default="artifacts/smoke", help="检查点输出目录")
+    parser.add_argument("--seed", type=int, default=7, help="随机种子")
+    args = parser.parse_args()
+    if not args.smoke:
+        parser.error("首版仅提供 --smoke；正式训练参数将在后续扩展")
+    checkpoint = run_smoke_training(args.output, seed=args.seed)
+    print(f"训练完成，检查点位于: {checkpoint}")
+
+
+if __name__ == "__main__":
+    main()
