@@ -32,3 +32,11 @@ def test_jepa_rejects_wrong_action_horizon():
             torch.rand(1, 3, 2),
             torch.rand(1, 3, 64, 64),
         )
+
+
+def test_decoder_reconstructs_rgb_image_shape_from_embedding():
+    model = JEPAModel()
+    reconstruction = model.decode(torch.rand(2, 64))
+    assert reconstruction.shape == (2, 3, 64, 64)
+    assert torch.all(reconstruction >= 0.0)
+    assert torch.all(reconstruction <= 1.0)

@@ -18,7 +18,7 @@ python -m push_t_jepa.train --smoke --output artifacts/smoke --seed 7
 python -m push_t_jepa.demo --checkpoint artifacts/smoke/model.pt --output artifacts/demo --seed 7
 ```
 
-演示会生成 `artifacts/demo/rollout.gif` 与 `artifacts/demo/metrics.json`。GIF 展示真实环境中滚动规划所执行的动作；JSON 记录目标的初始与最终几何距离。
+演示会生成 `artifacts/demo/rollout.gif` 与 `artifacts/demo/metrics.json`。GIF 每帧从左到右依次为：真实环境执行画面、JEPA 预测 embedding 经 decoder 解出的图像、目标图像；JSON 记录目标的初始与最终几何距离及 embedding 距离。
 
 ## 结构
 
@@ -30,7 +30,7 @@ python -m push_t_jepa.demo --checkpoint artifacts/smoke/model.pt --output artifa
 
 ## 解释
 
-JEPA 不重建目标像素，而是最小化 `预测未来 embedding` 与 `EMA 目标编码器产生的未来 embedding` 的均方误差。规划时，目标图像先被编码为目标 embedding，CEM 反复采样动作序列、用 JEPA 预测终点 embedding，并保留距离更小的精英动作序列来更新采样分布。
+JEPA 的主目标是最小化 `预测未来 embedding` 与 `EMA 目标编码器产生的未来 embedding` 的均方误差。额外的轻量 decoder 从 embedding 重建图像，只用于让训练信号和演示可视化更直观；CEM 仍然只使用 embedding 距离。规划时，目标图像先被编码为目标 embedding，CEM 反复采样动作序列、用 JEPA 预测终点 embedding，并保留距离更小的精英动作序列来更新采样分布。
 
 该仓库的物理是为理解表征学习与模型预测控制而刻意简化的近似，不是严格的真实摩擦仿真。Smoke 模式仅验证从数据、训练到规划产物的完整链路；要评估成功率，应增加训练轨迹和 epoch，并与随机动作基线比较最终几何距离。
 

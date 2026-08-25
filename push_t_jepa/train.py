@@ -20,6 +20,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     ema_momentum: float,
     variance_weight: float = 0.1,
+    reconstruction_weight: float = 0.25,
 ) -> float:
     """运行一个 epoch，并返回平均 embedding MSE。"""
     model.train()
@@ -28,7 +29,10 @@ def train_epoch(
         image, actions, future_image = _batch_to_device(batch, _model_device(model))
         optimizer.zero_grad()
         prediction, target = model(image, actions, future_image)
-        loss, _ = jepa_loss(prediction, target, variance_weight)
+        embedding_loss, _ = jepa_loss(prediction, target, variance_weight)
+        reconstruction_loss = functional.mse_loss(model.decode(model.encode_context(image)), image)
+        prediction_reconstruction_loss = functional.mse_loss(model.decode(prediction), future_image)
+        loss = embedding_loss + reconstruction_weight * (reconstruction_loss + prediction_reconstruction_loss)
         loss.backward()
         optimizer.step()
         model.update_target_encoder(ema_momentum)
@@ -110,6 +114,7 @@ def run_training(
     batch_size: int = 64,
     learning_rate: float = 3e-4,
     variance_weight: float = 0.1,
+    reconstruction_weight: float = 0.25,
     seed: int = 7,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
@@ -132,9 +137,9 @@ def run_training(
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
-    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight}
+    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight}
     for epoch in range(1, epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight)
+        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight)
         validation_loss = validate(model, validation_loader)
         history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss})
         if validation_loss < best_validation:
@@ -158,10 +163,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64, help="批量大小")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="Adam 学习率")
     parser.add_argument("--variance-weight", type=float, default=0.1, help="反坍塌方差正则权重")
+    parser.add_argument("--reconstruction-weight", type=float, default=0.25, help="图像解码重建损失权重")
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.seed,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.seed,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 

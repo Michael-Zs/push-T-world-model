@@ -31,6 +31,26 @@ class ImageEncoder(nn.Module):
         return self.network(image)
 
 
+class ImageDecoder(nn.Module):
+    """将 embedding 解码成可视化用的 64x64 RGB 图像。"""
+
+    def __init__(self, embedding_dim: int) -> None:
+        super().__init__()
+        self.project = nn.Linear(embedding_dim, 48 * 8 * 8)
+        self.network = nn.Sequential(
+            nn.ConvTranspose2d(48, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
+        features = self.project(embedding).reshape(-1, 48, 8, 8)
+        return self.network(features)
+
+
 class JEPAModel(nn.Module):
     """当前观察和动作序列到未来目标 embedding 的预测器。"""
 
@@ -46,6 +66,7 @@ class JEPAModel(nn.Module):
             nn.ReLU(),
             nn.Linear(128, self.config.embedding_dim),
         )
+        self.decoder = ImageDecoder(self.config.embedding_dim)
 
     def forward(
         self,
@@ -74,6 +95,12 @@ class JEPAModel(nn.Module):
             raise ValueError("上下文 embedding 形状无效")
         self._validate_actions(actions, context.shape[0])
         return torch.nn.functional.normalize(self.predictor(torch.cat((context, actions.flatten(start_dim=1)), dim=1)), dim=1)
+
+    def decode(self, embedding: torch.Tensor) -> torch.Tensor:
+        """把 context、target 或预测 embedding 解码为 RGB 图像。"""
+        if embedding.ndim != 2 or embedding.shape[1] != self.config.embedding_dim:
+            raise ValueError("待解码 embedding 形状无效")
+        return self.decoder(embedding)
 
     @torch.no_grad()
     def update_target_encoder(self, momentum: float) -> None:
