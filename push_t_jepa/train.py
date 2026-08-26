@@ -170,6 +170,7 @@ def run_training(
     threads: int | None = None,
     seed: int = 7,
     progress: Callable[[str], None] | None = None,
+    resume_checkpoint: str | Path | None = None,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
     if epochs <= 0 or batch_size <= 0:
@@ -190,6 +191,8 @@ def run_training(
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed))
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False)
     model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
+    if resume_checkpoint is not None:
+        load_checkpoint(resume_checkpoint, model)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
@@ -253,10 +256,11 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=64, help="环境、模型与 decoder 共用的正方形图像尺寸")
     parser.add_argument("--action-horizon", type=int, default=4, help="JEPA 直接预测的动作步数；设为 8 可避免 CEM 两段递推")
     parser.add_argument("--threads", type=int, default=None, help="PyTorch CPU 计算线程数，默认使用所有逻辑核")
+    parser.add_argument("--resume", default=None, help="从兼容的检查点继续训练（优化器状态会重新初始化）")
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.action_horizon, args.threads, args.seed, print,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.action_horizon, args.threads, args.seed, print, args.resume,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 
