@@ -59,10 +59,37 @@ class CEMPlanner:
             raise ValueError("执行步数不能为负数")
         observations = [env.render()]
         for _ in range(steps):
-            action = self.plan(observations[-1], target_image)[0]
+            action = self.next_action(observations[-1], target_image)
             observation, _ = env.step(action)
             observations.append(observation)
         return observations
+
+    def next_action(self, current_image: np.ndarray, target_image: np.ndarray) -> np.ndarray:
+        """尚未接触 T 时先靠近，接触后执行 CEM 的首个动作。"""
+        approach = self.approach_action(current_image)
+        return approach if approach is not None else self.plan(current_image, target_image)[0]
+
+    def approach_action(self, image: np.ndarray) -> np.ndarray | None:
+        """从渲染图像提取蓝色推杆与深色 T，并返回朝最近接触点移动的动作。"""
+        array = np.asarray(image)
+        size = self.model.config.image_size
+        if array.shape != (size, size, 3):
+            raise ValueError(f"图像必须是形状为 [{size}, {size}, 3] 的 RGB 数组")
+        red, green, blue = (array[..., index].astype(np.int16) for index in range(3))
+        pusher_mask = (blue > green + 45) & (blue > red + 70)
+        object_mask = np.max(array, axis=2) < 100
+        if not np.any(pusher_mask) or not np.any(object_mask):
+            return None
+        pusher_yx = np.argwhere(pusher_mask).mean(axis=0)
+        object_yx = np.argwhere(object_mask)
+        offsets = object_yx - pusher_yx
+        nearest = offsets[np.argmin(np.square(offsets).sum(axis=1))]
+        distance = float(np.linalg.norm(nearest))
+        pusher_radius = max(2.0, 0.045 * (size - 1))
+        if distance <= pusher_radius + 1.5:
+            return None
+        direction_yx = nearest / distance
+        return np.asarray([direction_yx[1], direction_yx[0]], dtype=np.float32)
 
     def _predict_terminal_embeddings(self, context: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         latent = context

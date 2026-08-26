@@ -39,6 +39,19 @@ def test_rollout_replanning_returns_one_observation_per_execution_step():
     assert len(observations) == 4
 
 
+def test_geometry_approach_action_moves_pusher_toward_visible_t_object():
+    env = PushTEnv(config=EnvConfig(image_size=64), seed=9)
+    env.set_state(
+        pusher=np.array([0.20, 0.50]),
+        object_position=np.array([0.50, 0.50]),
+        object_angle=0.0,
+    )
+    action = CEMPlanner(JEPAModel(), seed=9).approach_action(env.render())
+    assert action is not None
+    assert action[0] > 0.9
+    assert np.isclose(np.linalg.norm(action), 1.0)
+
+
 def test_cem_favors_actions_that_reduce_deterministic_embedding_distance():
     planner = CEMPlanner(
         _DeterministicPredictor(),

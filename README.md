@@ -26,7 +26,7 @@ python -m push_t_jepa.demo --checkpoint artifacts/smoke/model.pt --output artifa
 - `push_t_jepa/dataset.py`：带种子的随机轨迹及 JEPA 样本。
 - `push_t_jepa/model.py`：输出 `通道×8×8` 空间 latent 的上下文 CNN、EMA 目标 CNN 与动作条件卷积预测器。
 - `push_t_jepa/train.py`：embedding MSE 训练、EMA 更新和检查点。
-- `push_t_jepa/planner.py`：在 embedding 距离上优化的 CEM；8 步候选由两段 4 步 latent 预测递推得到终点。
+- `push_t_jepa/planner.py`：先由渲染图像中的推杆/T 颜色引导推杆接触，再在空间 latent 距离上使用 CEM；8 步候选由两段 4 步 latent 预测递推得到终点。
 
 ## 解释
 
@@ -34,7 +34,7 @@ JEPA 的主目标是最小化 `预测未来空间 latent` 与 `EMA 目标编码�
 
 该版本与旧的全局向量模型结构不兼容；更新代码后必须重新训练，不能复用以前的 `model.pt`。
 
-该仓库的物理是为理解表征学习与模型预测控制而刻意简化的近似，不是严格的真实摩擦仿真。Smoke 模式仅验证从数据、训练到规划产物的完整链路；要评估成功率，应增加训练轨迹和 epoch，并与随机动作基线比较最终几何距离。
+该仓库的物理是为理解表征学习与模型预测控制而刻意简化的近似，不是严格的真实摩擦仿真。环境的每步位移被限制为 `0.01`；因此 demo 在推杆未接触 T 前使用图像几何引导，接触后才将控制交给 CEM。Smoke 模式仅验证从数据、训练到规划产物的完整链路；要评估成功率，应增加训练轨迹和 epoch，并与随机动作基线比较最终几何距离。
 
 ## 正式 CPU 训练
 

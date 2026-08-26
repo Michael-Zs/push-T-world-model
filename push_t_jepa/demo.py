@@ -44,7 +44,10 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
         target_embedding = model.encode_target(planner._image_tensor(target_image, torch.device("cpu")))
         initial_embedding = model.encode_context(planner._image_tensor(current, torch.device("cpu")))
     for _ in range(steps):
-        sequence = planner.plan(real_frames[-1], target_image)
+        approach_action = planner.approach_action(real_frames[-1])
+        sequence = planner.plan(real_frames[-1], target_image) if approach_action is None else np.zeros((planner.config.horizon, 2), dtype=np.float32)
+        if approach_action is not None:
+            sequence[0] = approach_action
         with torch.no_grad():
             context = model.encode_context(planner._image_tensor(real_frames[-1], torch.device("cpu")))
             predicted_embedding = model.predict_from_context(
@@ -52,7 +55,7 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
                 torch.from_numpy(sequence[: model.config.action_horizon]).unsqueeze(0),
             )
             predicted_image = _decoder_image(model.decode(predicted_embedding))
-        action = sequence[0]
+        action = planner.next_action(real_frames[-1], target_image)
         frame, _ = env.step(action)
         real_frames.append(frame)
         frames.append(_compose_frame(frame, predicted_image, target_image))
