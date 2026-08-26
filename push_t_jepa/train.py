@@ -202,7 +202,7 @@ def run_training(
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
-    writer = SummaryWriter(log_dir=result / "tensorboard")
+    writer = SummaryWriter(log_dir=result / "tensorboard", max_queue=1, flush_secs=5)
     writer.add_scalar("data/effective_step_rate", collection_stats.effective_step_rate, 0)
     writer.add_scalar("data/mean_translation", collection_stats.mean_translation, 0)
     writer.add_scalar("data/mean_rotation", collection_stats.mean_rotation, 0)
