@@ -40,6 +40,8 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     real_frames = [current]
     frames: list[np.ndarray] = []
     planner = CEMPlanner(model, seed=seed)
+    best_goal_cost = planner.goal_cost(current, target_image)
+    stale_steps = 0
     with torch.no_grad():
         target_embedding = model.encode_target(planner._image_tensor(target_image, torch.device("cpu")))
         initial_embedding = model.encode_context(planner._image_tensor(current, torch.device("cpu")))
@@ -59,6 +61,14 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
         frame, _ = env.step(action)
         real_frames.append(frame)
         frames.append(_compose_frame(frame, predicted_image, target_image))
+        current_goal_cost = planner.goal_cost(frame, target_image)
+        if current_goal_cost < best_goal_cost - 1e-5:
+            best_goal_cost = current_goal_cost
+            stale_steps = 0
+        else:
+            stale_steps += 1
+        if stale_steps >= 8:
+            break
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
     if not frames:

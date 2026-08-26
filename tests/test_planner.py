@@ -72,3 +72,9 @@ def test_cem_favors_actions_that_reduce_deterministic_embedding_distance():
     image = np.zeros((64, 64, 3), dtype=np.uint8)
     actions = planner.plan(image, image)
     assert actions[:, 0].mean() > 0.2
+
+
+def test_goal_cost_uses_only_t_pose_coordinates():
+    planner = CEMPlanner(_DeterministicPredictor(), seed=3)
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+    assert planner.goal_cost(image, image) == 1.0

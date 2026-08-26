@@ -70,6 +70,20 @@ class CEMPlanner:
         approach = self.approach_action(current_image)
         return approach if approach is not None else self.plan(current_image, target_image)[0]
 
+    @torch.no_grad()
+    def goal_cost(self, current_image: np.ndarray, target_image: np.ndarray) -> float:
+        """返回当前观察中 T 的预测位姿到目标 T 位姿的平方距离。"""
+        device = next(self.model.parameters()).device
+        current = self._image_tensor(current_image, device)
+        target = self._image_tensor(target_image, device)
+        previous_mode = self.model.training
+        self.model.eval()
+        current_pose = self.model.predict_pose(self.model.encode_context(current))[:, 2:]
+        target_pose = self.model.predict_pose(self.model.encode_target(target))[:, 2:]
+        if previous_mode:
+            self.model.train()
+        return float((current_pose - target_pose).square().sum().cpu())
+
     def approach_action(self, image: np.ndarray) -> np.ndarray | None:
         """从渲染图像提取蓝色推杆与深色 T，并返回朝最近接触点移动的动作。"""
         array = np.asarray(image)
