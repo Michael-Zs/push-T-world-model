@@ -65,10 +65,14 @@ def run_demo(
     for _ in range(steps):
         approach_action = planner.approach_action(real_frames[-1])
         contact_reached = contact_reached or approach_action is None
-        sequence = (
-            planner.plan(real_frames[-1], target_image)
-            if approach_action is None
-            else np.zeros((planner.config.horizon, 2), dtype=np.float32)
+        # sequence = (
+        #     planner.plan(real_frames[-1], target_image)
+        #     if approach_action is None
+        #     else np.zeros((planner.config.horizon, 2), dtype=np.float32)
+        # )
+        sequence = np.zeros(
+            (model.config.action_horizon, 2),
+            dtype=np.float32,
         )
         if approach_action is not None:
             sequence[0] = approach_action
@@ -97,6 +101,7 @@ def run_demo(
         real_frames.append(frame)
         frames.append(_compose_frame(frame, predicted_image, target_image))
         current_goal_cost = planner.goal_cost(frame, target_image)
+        print(f"cost:{current_goal_cost}")
         if current_goal_cost < best_goal_cost - 1e-5:
             best_goal_cost = current_goal_cost
             stale_steps = 0
