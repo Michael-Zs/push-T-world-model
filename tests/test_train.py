@@ -56,3 +56,8 @@ def test_training_reports_collection_and_epoch_progress(tmp_path):
     run_training(tmp_path, trajectories=2, steps=8, epochs=1, batch_size=2, seed=2, progress=messages.append)
     assert any("采集轨迹" in message for message in messages)
     assert any("Epoch 1/1" in message for message in messages)
+
+
+def test_training_writes_tensorboard_event_file(tmp_path):
+    run_training(tmp_path, trajectories=2, steps=8, epochs=1, batch_size=2, seed=3)
+    assert any((tmp_path / "tensorboard").glob("events.out.tfevents.*"))

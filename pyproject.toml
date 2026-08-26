@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "tensorboard>=2.14"]
 
 [tool.setuptools.packages.find]
 include = ["push_t_jepa*"]

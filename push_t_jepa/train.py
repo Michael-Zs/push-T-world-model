@@ -10,6 +10,7 @@ from typing import Callable, Iterable
 import torch
 from torch.nn import functional as functional
 from torch.utils.data import DataLoader, random_split
+from torch.utils.tensorboard import SummaryWriter
 
 from .config import EnvConfig, ModelConfig
 from .dataset import PushTJEPADataset, collect_trajectories
@@ -149,21 +150,39 @@ def run_training(
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=result / "tensorboard")
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
     config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size}
     for epoch in range(1, epochs + 1):
-        batch_progress = lambda current, total, loss: progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}") if progress is not None and (current == total or current % max(1, total // 10) == 0) else None
+        def batch_progress(current: int, total: int, loss: float) -> None:
+            global_step = (epoch - 1) * total + current
+            writer.add_scalar("train/batch_loss", loss, global_step)
+            if progress is not None and (current == total or current % max(1, total // 10) == 0):
+                progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}")
         train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, batch_progress)
         validation_loss = validate(model, validation_loader)
+        writer.add_scalar("train/epoch_loss", train_loss, epoch)
+        writer.add_scalar("validation/mse", validation_loss, epoch)
         history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss})
         if validation_loss < best_validation:
             best_validation = validation_loss
             save_checkpoint(checkpoint, model, config, {"best_validation_mse": best_validation, "epoch": epoch})
+        writer.add_scalar("validation/best_mse", best_validation, epoch)
+        preview = next(iter(validation_loader))
+        with torch.no_grad():
+            image = preview["image"][:4]
+            actions = preview["actions"][:4]
+            future = preview["future_image"][:4]
+            prediction, _ = model(image, actions, future)
+            writer.add_images("images/current", image, epoch)
+            writer.add_images("images/future_target", future, epoch)
+            writer.add_images("images/predicted_decoder", model.decode(prediction), epoch)
         if progress is not None:
             progress(f"Epoch {epoch}/{epochs} 完成 train={train_loss:.5f} val={validation_loss:.5f} best={best_validation:.5f}")
     (result / "history.json").write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    writer.close()
     return checkpoint
 
 
