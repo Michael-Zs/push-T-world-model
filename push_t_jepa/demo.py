@@ -16,12 +16,21 @@ from .planner import CEMPlanner
 from .train import load_checkpoint
 
 
-def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: int = 12, stop_on_stall: bool = False) -> Path:
+def run_demo(
+    checkpoint: str | Path,
+    output: str | Path,
+    seed: int = 7,
+    steps: int = 12,
+    stop_on_stall: bool = False,
+    visual: bool = False,
+) -> Path:
     """以固定目标位姿进行滚动 CEM 规划，并写出 GIF 和指标 JSON。"""
     if steps < 0:
         raise ValueError("演示步数不能为负数")
     checkpoint_data = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    checkpoint_config = checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
+    checkpoint_config = (
+        checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
+    )
     image_size = int(checkpoint_config.get("image_size", 64))
     action_horizon = int(checkpoint_config.get("action_horizon", 4))
     model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
@@ -37,7 +46,9 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     )
     target_image = target_env.render()
     target_position = target_env.state.object_position.copy()
-    initial_distance = float(np.linalg.norm(env.state.object_position - target_position))
+    initial_distance = float(
+        np.linalg.norm(env.state.object_position - target_position)
+    )
     real_frames = [current]
     frames: list[np.ndarray] = []
     planner = CEMPlanner(model, seed=seed)
@@ -45,16 +56,26 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     stale_steps = 0
     contact_reached = False
     with torch.no_grad():
-        target_embedding = model.encode_target(planner._image_tensor(target_image, torch.device("cpu")))
-        initial_embedding = model.encode_context(planner._image_tensor(current, torch.device("cpu")))
+        target_embedding = model.encode_target(
+            planner._image_tensor(target_image, torch.device("cpu"))
+        )
+        initial_embedding = model.encode_context(
+            planner._image_tensor(current, torch.device("cpu"))
+        )
     for _ in range(steps):
         approach_action = planner.approach_action(real_frames[-1])
         contact_reached = contact_reached or approach_action is None
-        sequence = planner.plan(real_frames[-1], target_image) if approach_action is None else np.zeros((planner.config.horizon, 2), dtype=np.float32)
+        sequence = (
+            planner.plan(real_frames[-1], target_image)
+            if approach_action is None
+            else np.zeros((planner.config.horizon, 2), dtype=np.float32)
+        )
         if approach_action is not None:
             sequence[0] = approach_action
         with torch.no_grad():
-            context = model.encode_context(planner._image_tensor(real_frames[-1], torch.device("cpu")))
+            context = model.encode_context(
+                planner._image_tensor(real_frames[-1], torch.device("cpu"))
+            )
             predicted_embedding = model.predict_from_context(
                 context,
                 torch.from_numpy(sequence[: model.config.action_horizon]).unsqueeze(0),
@@ -62,6 +83,16 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
             predicted_image = _decoder_image(model.decode(predicted_embedding))
         action = planner.next_action(real_frames[-1], target_image)
         frame, _ = env.step(action)
+
+        if visual:
+            import cv2
+            import time
+
+            ret = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            time.sleep(0.01)
+            cv2.imshow("visual", ret)
+            cv2.waitKey(1)
+
         real_frames.append(frame)
         frames.append(_compose_frame(frame, predicted_image, target_image))
         current_goal_cost = planner.goal_cost(frame, target_image)
@@ -77,26 +108,53 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     if not frames:
         frames.append(_compose_frame(current, current, target_image))
     images = [Image.fromarray(frame) for frame in frames]
-    images[0].save(result / "rollout.gif", save_all=True, append_images=images[1:], duration=120, loop=0)
+    images[0].save(
+        result / "rollout.gif",
+        save_all=True,
+        append_images=images[1:],
+        duration=120,
+        loop=0,
+    )
     with torch.no_grad():
-        final_embedding = model.encode_context(planner._image_tensor(real_frames[-1], torch.device("cpu")))
+        final_embedding = model.encode_context(
+            planner._image_tensor(real_frames[-1], torch.device("cpu"))
+        )
     metrics = {
         "seed": seed,
         "steps": steps,
         "initial_geometric_distance": initial_distance,
-        "final_geometric_distance": float(np.linalg.norm(env.state.object_position - target_position)),
-        "initial_embedding_distance": float((initial_embedding - target_embedding).square().sum().sqrt()),
-        "final_embedding_distance": float((final_embedding - target_embedding).square().sum().sqrt()),
+        "final_geometric_distance": float(
+            np.linalg.norm(env.state.object_position - target_position)
+        ),
+        "initial_embedding_distance": float(
+            (initial_embedding - target_embedding).square().sum().sqrt()
+        ),
+        "final_embedding_distance": float(
+            (final_embedding - target_embedding).square().sum().sqrt()
+        ),
     }
-    (result / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    (result / "metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return result
 
 
 def _decoder_image(decoded: torch.Tensor) -> np.ndarray:
-    return decoded[0].detach().cpu().permute(1, 2, 0).mul(255).clamp(0, 255).to(torch.uint8).numpy()
+    return (
+        decoded[0]
+        .detach()
+        .cpu()
+        .permute(1, 2, 0)
+        .mul(255)
+        .clamp(0, 255)
+        .to(torch.uint8)
+        .numpy()
+    )
 
 
-def _compose_frame(real: np.ndarray, predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+def _compose_frame(
+    real: np.ndarray, predicted: np.ndarray, target: np.ndarray
+) -> np.ndarray:
     """拼接真实执行、JEPA 解码预测和目标图像，便于并排观察。"""
     return np.concatenate((real, predicted, target), axis=1)
 
@@ -110,9 +168,21 @@ def main() -> None:
     parser.add_argument("--output", default="artifacts/demo", help="演示输出目录")
     parser.add_argument("--seed", type=int, default=7, help="随机种子")
     parser.add_argument("--steps", type=int, default=12, help="滚动执行步数")
-    parser.add_argument("--stop-on-stall", action="store_true", help="连续 8 步预测位姿无改善时提前停止（诊断选项）")
+    parser.add_argument(
+        "--stop-on-stall",
+        action="store_true",
+        help="连续 8 步预测位姿无改善时提前停止（诊断选项）",
+    )
+    parser.add_argument("--visual", action="store_true")
     args = parser.parse_args()
-    output = run_demo(args.checkpoint, args.output, seed=args.seed, steps=args.steps, stop_on_stall=args.stop_on_stall)
+    output = run_demo(
+        args.checkpoint,
+        args.output,
+        seed=args.seed,
+        steps=args.steps,
+        stop_on_stall=args.stop_on_stall,
+        visual=args.visual,
+    )
     print(f"演示已写入: {output}")
 
 
