@@ -42,11 +42,13 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     planner = CEMPlanner(model, seed=seed)
     best_goal_cost = planner.goal_cost(current, target_image)
     stale_steps = 0
+    contact_reached = False
     with torch.no_grad():
         target_embedding = model.encode_target(planner._image_tensor(target_image, torch.device("cpu")))
         initial_embedding = model.encode_context(planner._image_tensor(current, torch.device("cpu")))
     for _ in range(steps):
         approach_action = planner.approach_action(real_frames[-1])
+        contact_reached = contact_reached or approach_action is None
         sequence = planner.plan(real_frames[-1], target_image) if approach_action is None else np.zeros((planner.config.horizon, 2), dtype=np.float32)
         if approach_action is not None:
             sequence[0] = approach_action
@@ -67,7 +69,7 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
             stale_steps = 0
         else:
             stale_steps += 1
-        if stale_steps >= 8:
+        if contact_reached and stale_steps >= 8:
             break
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
