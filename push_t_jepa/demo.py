@@ -90,6 +90,7 @@ def run_demo(
 
             ret = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             time.sleep(0.01)
+            cv2.imshow("target", target_image)
             cv2.imshow("visual", ret)
             cv2.waitKey(1)
 
