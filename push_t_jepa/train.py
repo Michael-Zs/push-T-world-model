@@ -42,8 +42,8 @@ def train_epoch(
             future_state = batch["future_state"].to(_model_device(model))
             pose_loss = functional.mse_loss(model.predict_pose(model.encode_context(image)), state)
             pose_loss = pose_loss + functional.mse_loss(model.predict_pose(prediction), future_state)
-        reconstruction_loss = functional.mse_loss(model.decode(model.encode_context(image)), image)
-        prediction_reconstruction_loss = functional.mse_loss(model.decode(prediction), future_image)
+        reconstruction_loss = _foreground_reconstruction_loss(model.decode(model.encode_context(image)), image)
+        prediction_reconstruction_loss = _foreground_reconstruction_loss(model.decode(prediction), future_image)
         loss = embedding_loss + pose_loss + reconstruction_weight * (reconstruction_loss + prediction_reconstruction_loss)
         loss.backward()
         optimizer.step()
@@ -65,6 +65,17 @@ def jepa_loss(prediction: torch.Tensor, target: torch.Tensor, variance_weight: f
     std = torch.sqrt(samples.var(dim=0, unbiased=False) + 1e-4)
     variance_penalty = torch.relu(1.0 - std).mean()
     return mse + variance_weight * variance_penalty, float(std.mean().detach().cpu())
+
+
+def _foreground_reconstruction_loss(prediction: torch.Tensor, target: torch.Tensor, foreground_weight: float = 12.0) -> torch.Tensor:
+    """对 Push-T 前景加权，避免 RGB MSE 被大面积浅色背景主导。"""
+    if prediction.shape != target.shape:
+        raise ValueError("重建预测与目标图像形状必须一致")
+    background = target.new_tensor((245 / 255, 247 / 255, 250 / 255)).view(1, 3, 1, 1)
+    foreground = (target - background).abs().amax(dim=1, keepdim=True) > 0.08
+    weights = 1.0 + foreground.to(target.dtype) * (foreground_weight - 1.0)
+    squared_error = (prediction - target).square()
+    return (squared_error * weights).sum() / (weights.sum() * prediction.shape[1])
 
 
 @torch.no_grad()
