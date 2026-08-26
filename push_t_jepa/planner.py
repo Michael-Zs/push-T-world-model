@@ -101,7 +101,7 @@ class CEMPlanner:
         nearest = offsets[np.argmin(np.square(offsets).sum(axis=1))]
         distance = float(np.linalg.norm(nearest))
         pusher_radius = max(2.0, 0.045 * (size - 1))
-        if distance <= pusher_radius + 1.5:
+        if distance <= pusher_radius + 0.9:
             return None
         direction_yx = nearest / distance
         return np.asarray([direction_yx[1], direction_yx[0]], dtype=np.float32)
