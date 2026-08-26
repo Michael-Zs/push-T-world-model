@@ -31,10 +31,15 @@ class ModelConfig:
     embedding_dim: int = 64
     action_horizon: int = 4
     image_size: int = 64
+    spatial_size: int = 8
 
     def __post_init__(self) -> None:
         if self.image_size < 64 or self.image_size & (self.image_size - 1):
             raise ValueError("图像尺寸必须是大于等于 64 的 2 的幂")
+        if self.embedding_dim <= 0 or self.action_horizon <= 0:
+            raise ValueError("latent 通道数和动作预测步数必须为正数")
+        if self.spatial_size != 8:
+            raise ValueError("当前空间 latent 尺寸固定为 8")
 
 
 @dataclass(frozen=True)

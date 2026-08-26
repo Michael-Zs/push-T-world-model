@@ -54,7 +54,8 @@ def jepa_loss(prediction: torch.Tensor, target: torch.Tensor, variance_weight: f
     if variance_weight < 0.0:
         raise ValueError("方差正则权重不能为负数")
     mse = functional.mse_loss(prediction, target)
-    std = torch.sqrt(prediction.var(dim=0, unbiased=False) + 1e-4)
+    samples = prediction.movedim(1, -1).reshape(-1, prediction.shape[1])
+    std = torch.sqrt(samples.var(dim=0, unbiased=False) + 1e-4)
     variance_penalty = torch.relu(1.0 - std).mean()
     return mse + variance_weight * variance_penalty, float(std.mean().detach().cpu())
 

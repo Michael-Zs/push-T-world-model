@@ -1,4 +1,4 @@
-"""动作条件 JEPA：只预测未来表征，不重建像素。"""
+"""保留空间布局的动作条件 JEPA。"""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from .config import ModelConfig
 
 
 class ImageEncoder(nn.Module):
-    """用于 64x64 RGB 观察的小型卷积编码器。"""
+    """将图像编码为固定 8x8 的空间 latent。"""
 
-    def __init__(self, embedding_dim: int) -> None:
+    def __init__(self, embedding_dim: int, spatial_size: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2),
@@ -22,9 +22,8 @@ class ImageEncoder(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 48, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Linear(48, embedding_dim),
+            nn.AdaptiveAvgPool2d((spatial_size, spatial_size)),
+            nn.Conv2d(48, embedding_dim, kernel_size=1),
         )
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -32,13 +31,12 @@ class ImageEncoder(nn.Module):
 
 
 class ImageDecoder(nn.Module):
-    """将 embedding 解码成可视化用的 64x64 RGB 图像。"""
+    """从空间 latent 解码成可视化用 RGB 图像。"""
 
     def __init__(self, embedding_dim: int, image_size: int) -> None:
         super().__init__()
-        self.project = nn.Linear(embedding_dim, 48 * 8 * 8)
         layers: list[nn.Module] = []
-        channels = 48
+        channels = embedding_dim
         for _ in range(int(torch.log2(torch.tensor(image_size // 8)).item())):
             next_channels = max(4, channels // 2)
             layers.append(nn.ConvTranspose2d(channels, next_channels, kernel_size=4, stride=2, padding=1))
@@ -48,9 +46,29 @@ class ImageDecoder(nn.Module):
         layers.append(nn.Sigmoid())
         self.network = nn.Sequential(*layers)
 
-    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
-        features = self.project(embedding).reshape(-1, 48, 8, 8)
-        return self.network(features)
+    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+        return self.network(latent)
+
+
+class SpatialPredictor(nn.Module):
+    """把一段动作作为通道条件，预测未来空间 latent。"""
+
+    def __init__(self, embedding_dim: int, action_horizon: int) -> None:
+        super().__init__()
+        self.action_encoder = nn.Sequential(
+            nn.Linear(action_horizon * 2, 128),
+            nn.ReLU(),
+            nn.Linear(128, embedding_dim),
+        )
+        self.network = nn.Sequential(
+            nn.Conv2d(embedding_dim, embedding_dim, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(embedding_dim, embedding_dim, kernel_size=3, padding=1),
+        )
+
+    def forward(self, context: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        action_features = self.action_encoder(actions.flatten(start_dim=1)).unsqueeze(-1).unsqueeze(-1)
+        return context + self.network(context + action_features)
 
 
 class JEPAModel(nn.Module):
@@ -59,15 +77,11 @@ class JEPAModel(nn.Module):
     def __init__(self, config: ModelConfig | None = None) -> None:
         super().__init__()
         self.config = config or ModelConfig()
-        self.context_encoder = ImageEncoder(self.config.embedding_dim)
+        self.context_encoder = ImageEncoder(self.config.embedding_dim, self.config.spatial_size)
         self.target_encoder = copy.deepcopy(self.context_encoder)
         self.target_encoder.requires_grad_(False)
         self.target_encoder.eval()
-        self.predictor = nn.Sequential(
-            nn.Linear(self.config.embedding_dim + self.config.action_horizon * 2, 128),
-            nn.ReLU(),
-            nn.Linear(128, self.config.embedding_dim),
-        )
+        self.predictor = SpatialPredictor(self.config.embedding_dim, self.config.action_horizon)
         self.decoder = ImageDecoder(self.config.embedding_dim, self.config.image_size)
 
     def forward(
@@ -93,14 +107,16 @@ class JEPAModel(nn.Module):
         return torch.nn.functional.normalize(self.target_encoder(image), dim=1)
 
     def predict_from_context(self, context: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        if context.ndim != 2 or context.shape[1] != self.config.embedding_dim:
+        expected = (self.config.embedding_dim, self.config.spatial_size, self.config.spatial_size)
+        if tuple(context.shape[1:]) != expected:
             raise ValueError("上下文 embedding 形状无效")
         self._validate_actions(actions, context.shape[0])
-        return torch.nn.functional.normalize(self.predictor(torch.cat((context, actions.flatten(start_dim=1)), dim=1)), dim=1)
+        return torch.nn.functional.normalize(self.predictor(context, actions), dim=1)
 
     def decode(self, embedding: torch.Tensor) -> torch.Tensor:
         """把 context、target 或预测 embedding 解码为 RGB 图像。"""
-        if embedding.ndim != 2 or embedding.shape[1] != self.config.embedding_dim:
+        expected = (self.config.embedding_dim, self.config.spatial_size, self.config.spatial_size)
+        if embedding.ndim != 4 or tuple(embedding.shape[1:]) != expected:
             raise ValueError("待解码 embedding 形状无效")
         return self.decoder(embedding)
 

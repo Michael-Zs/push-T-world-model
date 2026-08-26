@@ -17,13 +17,13 @@ class _DeterministicPredictor(nn.Module):
         self.weight = nn.Parameter(torch.zeros(1))
 
     def encode_context(self, image):
-        return torch.zeros((image.shape[0], 1), device=image.device)
+        return torch.zeros((image.shape[0], 1, 8, 8), device=image.device)
 
     def encode_target(self, image):
-        return torch.ones((image.shape[0], 1), device=image.device)
+        return torch.ones((image.shape[0], 1, 8, 8), device=image.device)
 
     def predict_from_context(self, context, actions):
-        return context + actions[:, :, 0].mean(dim=1, keepdim=True)
+        return context + actions[:, :, 0].mean(dim=1, keepdim=True).unsqueeze(-1).unsqueeze(-1)
 
 
 def test_cem_plan_has_bounded_action_sequence():

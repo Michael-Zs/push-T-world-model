@@ -5,15 +5,15 @@ from push_t_jepa.config import ModelConfig
 from push_t_jepa.model import JEPAModel
 
 
-def test_jepa_predicts_embedding_and_stops_target_gradient():
+def test_jepa_predicts_spatial_latent_and_stops_target_gradient():
     model = JEPAModel()
     prediction, target = model(
         torch.rand(2, 3, 64, 64),
         torch.rand(2, 4, 2),
         torch.rand(2, 3, 64, 64),
     )
-    assert prediction.shape == (2, 64)
-    assert target.shape == (2, 64)
+    assert prediction.shape == (2, 64, 8, 8)
+    assert target.shape == (2, 64, 8, 8)
     assert target.requires_grad is False
 
 
@@ -35,9 +35,9 @@ def test_jepa_rejects_wrong_action_horizon():
         )
 
 
-def test_decoder_reconstructs_rgb_image_shape_from_embedding():
+def test_decoder_reconstructs_rgb_image_shape_from_spatial_latent():
     model = JEPAModel()
-    reconstruction = model.decode(torch.rand(2, 64))
+    reconstruction = model.decode(torch.rand(2, 64, 8, 8))
     assert reconstruction.shape == (2, 3, 64, 64)
     assert torch.all(reconstruction >= 0.0)
     assert torch.all(reconstruction <= 1.0)
@@ -45,5 +45,10 @@ def test_decoder_reconstructs_rgb_image_shape_from_embedding():
 
 def test_decoder_supports_configured_256_pixel_images():
     model = JEPAModel(ModelConfig(image_size=256))
-    reconstruction = model.decode(torch.rand(1, 64))
+    reconstruction = model.decode(torch.rand(1, 64, 8, 8))
     assert reconstruction.shape == (1, 3, 256, 256)
+
+
+def test_decoder_rejects_global_embedding_without_spatial_layout():
+    with pytest.raises(ValueError, match="embedding"):
+        JEPAModel().decode(torch.rand(1, 64))
