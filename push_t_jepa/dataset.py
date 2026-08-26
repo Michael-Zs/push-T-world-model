@@ -102,6 +102,9 @@ def collect_trajectories_with_stats(
             env.set_state(pusher, object_position, float(rng.uniform(-np.pi, np.pi)))
         images = [env.render()]; states = [_state_vector(env)]; actions: list[np.ndarray] = []
         for _ in range(steps):
+            if mode and len(actions) > 0 and len(actions) % 8 == 0:
+                direction = direction + rng.normal(0.0, 0.15, size=2).astype(np.float32)
+                direction /= max(float(np.linalg.norm(direction)), 1e-6)
             before = env.state
             action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32) if mode == 0 else np.clip(direction + rng.normal(0.0, 0.08, 2), -1, 1).astype(np.float32)
             image, after = env.step(action)
