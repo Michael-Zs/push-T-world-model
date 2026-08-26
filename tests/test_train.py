@@ -2,8 +2,17 @@ import math
 
 import torch
 
-from push_t_jepa.model import JEPAModel
-from push_t_jepa.train import _foreground_reconstruction_loss, jepa_loss, load_checkpoint, run_training, save_checkpoint, train_epoch, validate_pose
+from push_t_jepa.model import JEPAModel, VAEJEPAModel
+from push_t_jepa.train import (
+    _foreground_reconstruction_loss,
+    jepa_loss,
+    load_checkpoint,
+    run_training,
+    save_checkpoint,
+    train_epoch,
+    train_vae_epoch,
+    validate_pose,
+)
 
 
 def test_one_training_epoch_returns_finite_loss_and_checkpoint_round_trips(tmp_path):
@@ -37,6 +46,34 @@ def test_foreground_reconstruction_gives_objects_more_weight_than_background():
     foreground_error = target.clone()
     foreground_error[:, :, 3:5, 3:5] = 0.9
     assert _foreground_reconstruction_loss(foreground_error, target) > _foreground_reconstruction_loss(background_error, target)
+
+
+def test_vae_training_reports_finite_kl_and_reconstruction_losses():
+    batch = {
+        "image": torch.rand(2, 3, 64, 64),
+        "actions": torch.rand(2, 4, 2),
+        "future_image": torch.rand(2, 3, 64, 64),
+        "state": torch.rand(2, 6),
+        "future_state": torch.rand(2, 6),
+    }
+    model = VAEJEPAModel()
+    metrics = train_vae_epoch(model, [batch], torch.optim.Adam(model.parameters(), lr=1e-3), ema_momentum=0.99, kl_weight=1e-3)
+    assert metrics["kl_loss"] >= 0.0
+    assert math.isfinite(metrics["reconstruction_loss"])
+
+
+def test_full_vae_training_writes_a_vae_checkpoint(tmp_path):
+    checkpoint = run_training(
+        output=tmp_path,
+        trajectories=2,
+        steps=8,
+        epochs=1,
+        batch_size=2,
+        seed=4,
+        vae=True,
+    )
+    saved = torch.load(checkpoint, weights_only=False)
+    assert saved["config"]["model_type"] == "vae_jepa"
 
 
 def test_pose_validation_returns_finite_error_for_labeled_batch():

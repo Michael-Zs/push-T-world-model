@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .config import EnvConfig, ModelConfig
 from .dataset import PushTJEPADataset, collect_trajectories, collect_trajectories_with_stats
-from .model import JEPAModel
+from .model import JEPAModel, VAEJEPAModel
 
 
 def train_epoch(
@@ -35,7 +35,7 @@ def train_epoch(
     for batch_index, batch in enumerate(loader, start=1):
         image, actions, future_image = _batch_to_device(batch, _model_device(model))
         optimizer.zero_grad()
-        prediction, target = model(image, actions, future_image)
+        prediction, target = model(image, actions, future_image)[:2]
         embedding_loss, _ = jepa_loss(prediction, target, variance_weight)
         pose_loss = torch.zeros((), device=image.device)
         if "state" in batch and "future_state" in batch:
@@ -60,6 +60,47 @@ def train_epoch(
     if not losses:
         raise ValueError("训练数据不能为空")
     return sum(losses) / len(losses)
+
+
+def train_vae_epoch(
+    model: VAEJEPAModel,
+    loader: Iterable[dict[str, torch.Tensor]],
+    optimizer: torch.optim.Optimizer,
+    ema_momentum: float,
+    variance_weight: float = 0.1,
+    reconstruction_weight: float = 0.25,
+    kl_weight: float = 1e-3,
+    progress: Callable[[int, int, float], None] | None = None,
+) -> dict[str, float]:
+    """训练一轮联合 VAE-JEPA，并报告可诊断的损失项。"""
+    model.train()
+    totals = {"loss": 0.0, "kl_loss": 0.0, "reconstruction_loss": 0.0}
+    count = 0
+    total_batches = len(loader) if hasattr(loader, "__len__") else 0
+    for batch_index, batch in enumerate(loader, start=1):
+        image, actions, future_image = _batch_to_device(batch, _model_device(model))
+        optimizer.zero_grad()
+        prediction, target, mean, logvar = model(image, actions, future_image)
+        embedding_loss, _ = jepa_loss(prediction, target, variance_weight)
+        state = batch["state"].to(image.device)
+        future_state = batch["future_state"].to(image.device)
+        pose_loss = functional.mse_loss(model.predict_pose(model.encode_context(image)), state)
+        pose_loss = pose_loss + functional.mse_loss(model.predict_pose(prediction), future_state)
+        reconstruction_loss = _foreground_reconstruction_loss(model.decode(torch.nn.functional.normalize(mean, dim=1)), image)
+        kl_loss = model.kl_loss(mean, logvar)
+        loss = embedding_loss + pose_loss + reconstruction_weight * reconstruction_loss + kl_weight * kl_loss
+        loss.backward()
+        optimizer.step()
+        model.update_target_encoder(ema_momentum)
+        totals["loss"] += float(loss.detach())
+        totals["kl_loss"] += float(kl_loss.detach())
+        totals["reconstruction_loss"] += float(reconstruction_loss.detach())
+        count += 1
+        if progress is not None:
+            progress(batch_index, total_batches, float(loss.detach()))
+    if count == 0:
+        raise ValueError("训练数据不能为空")
+    return {name: value / count for name, value in totals.items()}
 
 
 def jepa_loss(prediction: torch.Tensor, target: torch.Tensor, variance_weight: float = 0.1) -> tuple[torch.Tensor, float]:
@@ -91,7 +132,7 @@ def validate(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -> flo
     losses: list[float] = []
     for batch in loader:
         image, actions, future_image = _batch_to_device(batch, _model_device(model))
-        prediction, target = model(image, actions, future_image)
+        prediction, target = model(image, actions, future_image)[:2]
         losses.append(float(functional.mse_loss(prediction, target).cpu()))
     if not losses:
         raise ValueError("验证数据不能为空")
@@ -107,7 +148,7 @@ def validate_pose(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -
         if "future_state" not in batch:
             continue
         image, actions, future_image = _batch_to_device(batch, _model_device(model))
-        prediction, _ = model(image, actions, future_image)
+        prediction = model(image, actions, future_image)[0]
         target_pose = batch["future_state"].to(_model_device(model))[:, 2:]
         losses.append(float(functional.mse_loss(model.predict_pose(prediction)[:, 2:], target_pose).cpu()))
     if not losses:
@@ -156,9 +197,9 @@ def _batch_to_device(batch: dict[str, torch.Tensor], device: torch.device) -> tu
     return tuple(batch[key].to(device) for key in required)  # type: ignore[return-value]
 
 
-def run_smoke_training(output: str | Path, seed: int = 7) -> Path:
+def run_smoke_training(output: str | Path, seed: int = 7, vae: bool = False) -> Path:
     """以极小数据集完成一次 CPU 训练，供安装验证和演示使用。"""
-    return run_training(output, trajectories=8, steps=8, epochs=1, batch_size=8, seed=seed)
+    return run_training(output, trajectories=8, steps=8, epochs=1, batch_size=8, seed=seed, vae=vae)
 
 
 def run_training(
@@ -177,6 +218,9 @@ def run_training(
     seed: int = 7,
     progress: Callable[[str], None] | None = None,
     resume_checkpoint: str | Path | None = None,
+    vae: bool = False,
+    kl_weight: float = 1e-3,
+    kl_warmup_epochs: int = 5,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
     if epochs <= 0 or batch_size <= 0:
@@ -196,9 +240,13 @@ def run_training(
     train_set, validation_set = random_split(dataset, [train_size, validation_size], generator=torch.Generator().manual_seed(seed))
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed))
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False)
-    model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
+    model = (VAEJEPAModel if vae else JEPAModel)(ModelConfig(image_size=image_size, action_horizon=action_horizon))
     if resume_checkpoint is not None:
-        load_checkpoint(resume_checkpoint, model)
+        checkpoint_info = load_checkpoint(resume_checkpoint, model)
+        previous_type = checkpoint_info["config"].get("model_type", "jepa")
+        expected_type = "vae_jepa" if vae else "jepa"
+        if previous_type != expected_type:
+            raise ValueError(f"恢复检查点的模型类型为 {previous_type}，与当前 {expected_type} 不兼容")
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
@@ -209,14 +257,23 @@ def run_training(
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
-    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size, "action_horizon": action_horizon, "threads": worker_threads}
+    config = {"model_type": "vae_jepa" if vae else "jepa", "seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size, "action_horizon": action_horizon, "threads": worker_threads, "kl_weight": kl_weight if vae else 0.0}
     for epoch in range(1, epochs + 1):
         def batch_progress(current: int, total: int, loss: float) -> None:
             global_step = (epoch - 1) * total + current
             writer.add_scalar("train/batch_loss", loss, global_step)
             if progress is not None and (current == total or current % max(1, total // 10) == 0):
                 progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}")
-        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, legacy_reconstruction, batch_progress)
+        if vae:
+            vae_metrics = train_vae_epoch(
+                model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight,
+                kl_weight * min(1.0, epoch / max(1, kl_warmup_epochs)), batch_progress,
+            )
+            train_loss = vae_metrics["loss"]
+            writer.add_scalar("vae/kl_loss", vae_metrics["kl_loss"], epoch)
+            writer.add_scalar("vae/reconstruction_loss", vae_metrics["reconstruction_loss"], epoch)
+        else:
+            train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, legacy_reconstruction, batch_progress)
         validation_loss = validate(model, validation_loader)
         pose_validation = validate_pose(model, validation_loader)
         writer.add_scalar("train/epoch_loss", train_loss, epoch)
@@ -233,7 +290,7 @@ def run_training(
             image = preview["image"][:4]
             actions = preview["actions"][:4]
             future = preview["future_image"][:4]
-            prediction, _ = model(image, actions, future)
+            prediction = model(image, actions, future)[0]
             writer.add_images("images/current", image, epoch)
             writer.add_images("images/future_target", future, epoch)
             writer.add_images("images/predicted_decoder", model.decode(prediction), epoch)
@@ -264,11 +321,29 @@ def main() -> None:
     parser.add_argument("--action-horizon", type=int, default=4, help="JEPA 直接预测的动作步数；设为 8 可避免 CEM 两段递推")
     parser.add_argument("--threads", type=int, default=None, help="PyTorch CPU 计算线程数，默认使用所有逻辑核")
     parser.add_argument("--resume", default=None, help="从兼容的检查点继续训练（优化器状态会重新初始化）")
+    parser.add_argument("--vae", action="store_true", help="使用空间 VAE-JEPA 模型")
+    parser.add_argument("--kl-weight", type=float, default=1e-3, help="VAE KL 正则最终权重")
+    parser.add_argument("--kl-warmup-epochs", type=int, default=5, help="VAE KL 权重线性 warm-up 轮数")
     args = parser.parse_args()
-    checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
-        args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.legacy_reconstruction,
-        args.image_size, args.action_horizon, args.threads, args.seed, print, args.resume,
+    checkpoint = run_smoke_training(args.output, seed=args.seed, vae=args.vae) if args.smoke else run_training(
+        output=args.output,
+        trajectories=args.trajectories,
+        steps=args.steps,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        variance_weight=args.variance_weight,
+        reconstruction_weight=args.reconstruction_weight,
+        legacy_reconstruction=args.legacy_reconstruction,
+        image_size=args.image_size,
+        action_horizon=args.action_horizon,
+        threads=args.threads,
+        seed=args.seed,
+        progress=print,
+        resume_checkpoint=args.resume,
+        vae=args.vae,
+        kl_weight=args.kl_weight,
+        kl_warmup_epochs=args.kl_warmup_epochs,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 
