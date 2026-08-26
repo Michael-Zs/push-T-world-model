@@ -16,7 +16,7 @@ from .planner import CEMPlanner
 from .train import load_checkpoint
 
 
-def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: int = 12) -> Path:
+def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: int = 12, stop_on_stall: bool = False) -> Path:
     """以固定目标位姿进行滚动 CEM 规划，并写出 GIF 和指标 JSON。"""
     if steps < 0:
         raise ValueError("演示步数不能为负数")
@@ -70,7 +70,7 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
             stale_steps = 0
         else:
             stale_steps += 1
-        if contact_reached and stale_steps >= 8:
+        if stop_on_stall and contact_reached and stale_steps >= 8:
             break
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
@@ -110,8 +110,9 @@ def main() -> None:
     parser.add_argument("--output", default="artifacts/demo", help="演示输出目录")
     parser.add_argument("--seed", type=int, default=7, help="随机种子")
     parser.add_argument("--steps", type=int, default=12, help="滚动执行步数")
+    parser.add_argument("--stop-on-stall", action="store_true", help="连续 8 步预测位姿无改善时提前停止（诊断选项）")
     args = parser.parse_args()
-    output = run_demo(args.checkpoint, args.output, seed=args.seed, steps=args.steps)
+    output = run_demo(args.checkpoint, args.output, seed=args.seed, steps=args.steps, stop_on_stall=args.stop_on_stall)
     print(f"演示已写入: {output}")
 
 
