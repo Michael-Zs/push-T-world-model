@@ -43,12 +43,15 @@ JEPA 的主目标是最小化 `预测未来空间 latent` 与 `EMA 目标编码�
 ```bash
 python -m push_t_jepa.train \
   --output artifacts/train-medium --seed 7 \
-  --trajectories 1000 --steps 64 --epochs 30 --batch-size 64 \
+  --trajectories 1000 --steps 64 --epochs 30 --batch-size 256 \
+  --threads 10 --action-horizon 8 \
   --learning-rate 3e-4 --variance-weight 0.1
 python -m push_t_jepa.demo \
   --checkpoint artifacts/train-medium/model.pt \
   --output artifacts/demo-medium --seed 7 --steps 20
 ```
+
+`--threads` 应设为机器的逻辑核心数（这台 Mac 为 10）；`--batch-size 256` 是 16 GB Mac 的起始值。它会显著减少每个 epoch 的 CPU 调度开销，但不要求也不应刻意占满内存。若训练损失波动明显，先降回 `128`；若机器内存不足，再降为 `64`。
 
 确认 `history.json` 中验证 MSE 稳定下降后，再运行默认规模：
 
