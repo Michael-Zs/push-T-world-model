@@ -17,6 +17,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[tool.setuptools.packages.find]
+include = ["push_t_jepa*"]
+exclude = ["artifacts*", "tests*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
