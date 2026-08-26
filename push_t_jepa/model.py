@@ -30,6 +30,25 @@ class ImageEncoder(nn.Module):
         return self.network(image)
 
 
+class VAEImageEncoder(nn.Module):
+    """输出空间 VAE latent 的均值与对数方差。"""
+
+    def __init__(self, embedding_dim: int, spatial_size: int) -> None:
+        super().__init__()
+        self.backbone = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2), nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 48, kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.AdaptiveAvgPool2d((spatial_size, spatial_size)),
+        )
+        self.mean = nn.Conv2d(48, embedding_dim, kernel_size=1)
+        self.logvar = nn.Conv2d(48, embedding_dim, kernel_size=1)
+
+    def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.backbone(image)
+        return self.mean(features), self.logvar(features).clamp(-12.0, 8.0)
+
+
 class ImageDecoder(nn.Module):
     """从空间 latent 解码成可视化用 RGB 图像。"""
 
@@ -160,3 +179,43 @@ class JEPAModel(nn.Module):
         pusher = (blue > green + 45 / 255) & (blue > red + 70 / 255)
         background = torch.tensor((245 / 255, 247 / 255, 250 / 255), dtype=image.dtype, device=image.device).view(1, 3, 1, 1)
         return torch.where(pusher.unsqueeze(1), background, image)
+
+
+class VAEJEPAModel(JEPAModel):
+    """以空间 VAE latent 作为 JEPA 世界模型状态的联合模型。"""
+
+    def __init__(self, config: ModelConfig | None = None) -> None:
+        super().__init__(config)
+        self.context_encoder = VAEImageEncoder(self.config.embedding_dim, self.config.spatial_size)
+        self.target_encoder = copy.deepcopy(self.context_encoder)
+        self.target_encoder.requires_grad_(False)
+        self.target_encoder.eval()
+
+    def encode_distribution(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        self._validate_images(image, "当前图像")
+        return self.context_encoder(image)
+
+    def sample_latent(self, mean: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            return mean + torch.randn_like(mean) * torch.exp(0.5 * logvar)
+        return mean
+
+    def kl_loss(self, mean: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        return 0.5 * (mean.square() + logvar.exp() - 1.0 - logvar).mean()
+
+    def encode_context(self, image: torch.Tensor) -> torch.Tensor:
+        mean, logvar = self.encode_distribution(image)
+        return torch.nn.functional.normalize(self.sample_latent(mean, logvar), dim=1)
+
+    @torch.no_grad()
+    def encode_target(self, image: torch.Tensor) -> torch.Tensor:
+        self._validate_images(image, "目标图像")
+        mean, _ = self.target_encoder(image)
+        return torch.nn.functional.normalize(mean, dim=1)
+
+    def forward(self, image: torch.Tensor, actions: torch.Tensor, future_image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self._validate_images(future_image, "未来图像")
+        self._validate_actions(actions, image.shape[0])
+        mean, logvar = self.encode_distribution(image)
+        context = torch.nn.functional.normalize(self.sample_latent(mean, logvar), dim=1)
+        return self.predict_from_context(context, actions), self.encode_target(future_image), mean, logvar

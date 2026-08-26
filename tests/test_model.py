@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from push_t_jepa.config import ModelConfig
-from push_t_jepa.model import JEPAModel
+from push_t_jepa.model import JEPAModel, VAEJEPAModel
 
 
 def test_jepa_predicts_spatial_latent_and_stops_target_gradient():
@@ -78,3 +78,10 @@ def test_pose_head_preserves_spatial_position_information():
     first = torch.zeros(1, 64, 8, 8); first[:, 0, 1, 1] = 1
     second = torch.zeros(1, 64, 8, 8); second[:, 0, 6, 6] = 1
     assert not torch.allclose(model.predict_pose(first), model.predict_pose(second))
+
+
+def test_vae_encoder_returns_spatial_distribution_and_finite_kl():
+    model = VAEJEPAModel(ModelConfig(action_horizon=4))
+    mean, logvar = model.encode_distribution(torch.rand(2, 3, 64, 64))
+    assert mean.shape == logvar.shape == (2, 64, 8, 8)
+    assert torch.isfinite(model.kl_loss(mean, logvar))
