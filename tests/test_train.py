@@ -3,7 +3,7 @@ import math
 import torch
 
 from push_t_jepa.model import JEPAModel
-from push_t_jepa.train import jepa_loss, load_checkpoint, run_training, save_checkpoint, train_epoch
+from push_t_jepa.train import jepa_loss, load_checkpoint, run_training, save_checkpoint, train_epoch, validate_pose
 
 
 def test_one_training_epoch_returns_finite_loss_and_checkpoint_round_trips(tmp_path):
@@ -27,6 +27,11 @@ def test_variance_regularization_penalizes_collapsed_embeddings():
     diverse_loss, diverse_std = jepa_loss(diverse, diverse, variance_weight=1.0)
     assert collapsed_std < 0.02
     assert collapsed_loss > diverse_loss
+
+
+def test_pose_validation_returns_finite_error_for_labeled_batch():
+    batch = {"image": torch.rand(2, 3, 64, 64), "actions": torch.rand(2, 4, 2), "future_image": torch.rand(2, 3, 64, 64), "future_state": torch.rand(2, 6)}
+    assert math.isfinite(validate_pose(JEPAModel(), [batch]))
 
 
 def test_full_training_writes_best_checkpoint_and_history(tmp_path):

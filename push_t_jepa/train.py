@@ -81,6 +81,23 @@ def validate(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -> flo
     return sum(losses) / len(losses)
 
 
+@torch.no_grad()
+def validate_pose(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -> float:
+    """计算未来 T 物体位姿（位置、sin/cos 朝向）的预测 MSE。"""
+    model.eval()
+    losses: list[float] = []
+    for batch in loader:
+        if "future_state" not in batch:
+            continue
+        image, actions, future_image = _batch_to_device(batch, _model_device(model))
+        prediction, _ = model(image, actions, future_image)
+        target_pose = batch["future_state"].to(_model_device(model))[:, 2:]
+        losses.append(float(functional.mse_loss(model.predict_pose(prediction)[:, 2:], target_pose).cpu()))
+    if not losses:
+        return 0.0
+    return sum(losses) / len(losses)
+
+
 def save_checkpoint(
     path: str | Path,
     model: JEPAModel,
@@ -179,13 +196,16 @@ def run_training(
                 progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}")
         train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, batch_progress)
         validation_loss = validate(model, validation_loader)
+        pose_validation = validate_pose(model, validation_loader)
         writer.add_scalar("train/epoch_loss", train_loss, epoch)
         writer.add_scalar("validation/mse", validation_loss, epoch)
-        history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss})
-        if validation_loss < best_validation:
-            best_validation = validation_loss
-            save_checkpoint(checkpoint, model, config, {"best_validation_mse": best_validation, "epoch": epoch})
-        writer.add_scalar("validation/best_mse", best_validation, epoch)
+        writer.add_scalar("validation/t_pose_mse", pose_validation, epoch)
+        selection_loss = validation_loss + pose_validation
+        history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss, "validation_t_pose_mse": pose_validation})
+        if selection_loss < best_validation:
+            best_validation = selection_loss
+            save_checkpoint(checkpoint, model, config, {"best_validation_score": best_validation, "validation_mse": validation_loss, "validation_t_pose_mse": pose_validation, "epoch": epoch})
+        writer.add_scalar("validation/best_score", best_validation, epoch)
         preview = next(iter(validation_loader))
         with torch.no_grad():
             image = preview["image"][:4]
