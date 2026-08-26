@@ -67,7 +67,7 @@ class CEMPlanner:
 
     def next_action(self, current_image: np.ndarray, target_image: np.ndarray) -> np.ndarray:
         """尚未接触 T 时先靠近，接触后执行 CEM 的首个动作。"""
-        approach = self.approach_action(current_image)
+        approach = self.approach_action(current_image, target_image)
         return approach if approach is not None else self.plan(current_image, target_image)[0]
 
     @torch.no_grad()
@@ -84,8 +84,8 @@ class CEMPlanner:
             self.model.train()
         return float((current_pose - target_pose).square().sum().cpu())
 
-    def approach_action(self, image: np.ndarray) -> np.ndarray | None:
-        """从渲染图像提取蓝色推杆与深色 T，并返回朝最近接触点移动的动作。"""
+    def approach_action(self, image: np.ndarray, target_image: np.ndarray | None = None) -> np.ndarray | None:
+        """接近 T；有目标时优先选择目标反侧的接触面。"""
         array = np.asarray(image)
         size = self.model.config.image_size
         if array.shape != (size, size, 3):
@@ -97,8 +97,17 @@ class CEMPlanner:
             return None
         pusher_yx = np.argwhere(pusher_mask).mean(axis=0)
         object_yx = np.argwhere(object_mask)
-        offsets = object_yx - pusher_yx
-        nearest = offsets[np.argmin(np.square(offsets).sum(axis=1))]
+        contact_yx = object_yx[np.argmin(np.square(object_yx - pusher_yx).sum(axis=1))]
+        if target_image is not None:
+            target = np.asarray(target_image)
+            target_mask = np.max(target, axis=2) < 100
+            if target.shape == array.shape and np.any(target_mask):
+                center = object_yx.mean(axis=0)
+                goal_direction = np.argwhere(target_mask).mean(axis=0) - center
+                norm = float(np.linalg.norm(goal_direction))
+                if norm > 1e-6:
+                    contact_yx = object_yx[np.argmin((object_yx - center) @ (goal_direction / norm))]
+        nearest = contact_yx - pusher_yx
         distance = float(np.linalg.norm(nearest))
         pusher_radius = max(2.0, 0.045 * (size - 1))
         if distance <= pusher_radius + 0.9:
