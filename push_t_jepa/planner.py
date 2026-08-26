@@ -71,9 +71,9 @@ class CEMPlanner:
             latent = self.model.predict_from_context(latent, actions[:, start : start + step])
         return latent
 
-    @staticmethod
-    def _image_tensor(image: np.ndarray, device: torch.device) -> torch.Tensor:
+    def _image_tensor(self, image: np.ndarray, device: torch.device) -> torch.Tensor:
         array = np.asarray(image)
-        if array.shape != (64, 64, 3):
-            raise ValueError("图像必须是形状为 [64, 64, 3] 的 RGB 数组")
+        size = self.model.config.image_size
+        if array.shape != (size, size, 3):
+            raise ValueError(f"图像必须是形状为 [{size}, {size}, 3] 的 RGB 数组")
         return torch.from_numpy(array.copy()).permute(2, 0, 1).unsqueeze(0).to(device=device, dtype=torch.float32).div(255.0)

@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from .config import EnvConfig, ModelConfig
 from .env import PushTEnv
 from .model import JEPAModel
 from .planner import CEMPlanner
@@ -19,11 +20,14 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     """以固定目标位姿进行滚动 CEM 规划，并写出 GIF 和指标 JSON。"""
     if steps < 0:
         raise ValueError("演示步数不能为负数")
-    model = JEPAModel()
+    checkpoint_data = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    checkpoint_config = checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
+    image_size = int(checkpoint_config.get("image_size", 64))
+    model = JEPAModel(ModelConfig(image_size=image_size))
     load_checkpoint(checkpoint, model)
-    env = PushTEnv(seed=seed)
+    env = PushTEnv(config=EnvConfig(image_size=image_size), seed=seed)
     current = env.reset()
-    target_env = PushTEnv(seed=seed + 1)
+    target_env = PushTEnv(config=EnvConfig(image_size=image_size), seed=seed + 1)
     target_env.reset()
     target_env.set_state(
         pusher=np.array([0.15, 0.15], dtype=np.float32),

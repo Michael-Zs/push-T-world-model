@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from push_t_jepa.config import ModelConfig
 from push_t_jepa.model import JEPAModel
 
 
@@ -40,3 +41,9 @@ def test_decoder_reconstructs_rgb_image_shape_from_embedding():
     assert reconstruction.shape == (2, 3, 64, 64)
     assert torch.all(reconstruction >= 0.0)
     assert torch.all(reconstruction <= 1.0)
+
+
+def test_decoder_supports_configured_256_pixel_images():
+    model = JEPAModel(ModelConfig(image_size=256))
+    reconstruction = model.decode(torch.rand(1, 64))
+    assert reconstruction.shape == (1, 3, 256, 256)

@@ -5,7 +5,7 @@ from torch import nn
 from push_t_jepa.env import PushTEnv
 from push_t_jepa.model import JEPAModel
 from push_t_jepa.planner import CEMPlanner
-from push_t_jepa.config import CEMConfig, ModelConfig
+from push_t_jepa.config import CEMConfig, EnvConfig, ModelConfig
 
 
 class _DeterministicPredictor(nn.Module):
@@ -34,7 +34,7 @@ def test_cem_plan_has_bounded_action_sequence():
 
 
 def test_rollout_replanning_returns_one_observation_per_execution_step():
-    env = PushTEnv(seed=9)
+    env = PushTEnv(config=EnvConfig(image_size=64), seed=9)
     observations = CEMPlanner(JEPAModel(), seed=9).rollout_replan(env, env.reset(), steps=3)
     assert len(observations) == 4
 

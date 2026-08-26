@@ -34,17 +34,19 @@ class ImageEncoder(nn.Module):
 class ImageDecoder(nn.Module):
     """将 embedding 解码成可视化用的 64x64 RGB 图像。"""
 
-    def __init__(self, embedding_dim: int) -> None:
+    def __init__(self, embedding_dim: int, image_size: int) -> None:
         super().__init__()
         self.project = nn.Linear(embedding_dim, 48 * 8 * 8)
-        self.network = nn.Sequential(
-            nn.ConvTranspose2d(48, 32, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(16, 3, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
-        )
+        layers: list[nn.Module] = []
+        channels = 48
+        for _ in range(int(torch.log2(torch.tensor(image_size // 8)).item())):
+            next_channels = max(4, channels // 2)
+            layers.append(nn.ConvTranspose2d(channels, next_channels, kernel_size=4, stride=2, padding=1))
+            layers.append(nn.ReLU())
+            channels = next_channels
+        layers.append(nn.Conv2d(channels, 3, kernel_size=1))
+        layers.append(nn.Sigmoid())
+        self.network = nn.Sequential(*layers)
 
     def forward(self, embedding: torch.Tensor) -> torch.Tensor:
         features = self.project(embedding).reshape(-1, 48, 8, 8)
@@ -66,7 +68,7 @@ class JEPAModel(nn.Module):
             nn.ReLU(),
             nn.Linear(128, self.config.embedding_dim),
         )
-        self.decoder = ImageDecoder(self.config.embedding_dim)
+        self.decoder = ImageDecoder(self.config.embedding_dim, self.config.image_size)
 
     def forward(
         self,
@@ -109,10 +111,9 @@ class JEPAModel(nn.Module):
         for target, context in zip(self.target_encoder.parameters(), self.context_encoder.parameters()):
             target.mul_(momentum).add_(context, alpha=1.0 - momentum)
 
-    @staticmethod
-    def _validate_images(image: torch.Tensor, name: str) -> None:
-        if image.ndim != 4 or image.shape[1:] != (3, 64, 64):
-            raise ValueError(f"{name}必须是形状为 [批量, 3, 64, 64] 的张量")
+    def _validate_images(self, image: torch.Tensor, name: str) -> None:
+        if image.ndim != 4 or image.shape[1] != 3 or image.shape[2:] != (self.config.image_size, self.config.image_size):
+            raise ValueError(f"{name}图像尺寸与模型配置不一致")
 
     def _validate_actions(self, actions: torch.Tensor, batch_size: int) -> None:
         expected = (batch_size, self.config.action_horizon, 2)

@@ -11,6 +11,7 @@ import torch
 from torch.nn import functional as functional
 from torch.utils.data import DataLoader, random_split
 
+from .config import EnvConfig, ModelConfig
 from .dataset import PushTJEPADataset, collect_trajectories
 from .model import JEPAModel
 
@@ -122,13 +123,15 @@ def run_training(
     learning_rate: float = 3e-4,
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
+    image_size: int = 64,
     seed: int = 7,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
     if epochs <= 0 or batch_size <= 0:
         raise ValueError("训练轮数和批量大小必须为正数")
     torch.manual_seed(seed)
-    samples = collect_trajectories(trajectories=trajectories, steps=steps, seed=seed, guided_fraction=0.7)
+    env_config = EnvConfig(image_size=image_size)
+    samples = collect_trajectories(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, guided_fraction=0.7)
     dataset = PushTJEPADataset(samples, horizon=4)
     validation_size = max(1, len(dataset) // 10)
     train_size = len(dataset) - validation_size
@@ -137,14 +140,14 @@ def run_training(
     train_set, validation_set = random_split(dataset, [train_size, validation_size], generator=torch.Generator().manual_seed(seed))
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed))
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False)
-    model = JEPAModel()
+    model = JEPAModel(ModelConfig(image_size=image_size))
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
-    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight}
+    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size}
     for epoch in range(1, epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight)
         validation_loss = validate(model, validation_loader)
@@ -171,10 +174,11 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="Adam 学习率")
     parser.add_argument("--variance-weight", type=float, default=0.1, help="反坍塌方差正则权重")
     parser.add_argument("--reconstruction-weight", type=float, default=0.25, help="图像解码重建损失权重")
+    parser.add_argument("--image-size", type=int, default=64, help="环境、模型与 decoder 共用的正方形图像尺寸")
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.seed,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.seed,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 
