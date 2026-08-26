@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 import torch
@@ -26,6 +27,7 @@ def collect_trajectories(
     steps: int = 12,
     seed: int = 7,
     guided_fraction: float = 0.7,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[Trajectory]:
     """采集由接触导向策略与随机探索混合组成的可重复轨迹。"""
     if trajectories <= 0:
@@ -59,6 +61,8 @@ def collect_trajectories(
                 actions=torch.from_numpy(np.stack(actions)).to(torch.float32),
             )
         )
+        if progress is not None:
+            progress(len(result), trajectories)
     return result
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import warnings
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import torch
 from torch.nn import functional as functional
@@ -23,11 +23,13 @@ def train_epoch(
     ema_momentum: float,
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
+    progress: Callable[[int, int, float], None] | None = None,
 ) -> float:
     """运行一个 epoch，并返回平均 embedding MSE。"""
     model.train()
     losses: list[float] = []
-    for batch in loader:
+    total_batches = len(loader) if hasattr(loader, "__len__") else 0
+    for batch_index, batch in enumerate(loader, start=1):
         image, actions, future_image = _batch_to_device(batch, _model_device(model))
         optimizer.zero_grad()
         prediction, target = model(image, actions, future_image)
@@ -39,6 +41,8 @@ def train_epoch(
         optimizer.step()
         model.update_target_encoder(ema_momentum)
         losses.append(float(loss.detach().cpu()))
+        if progress is not None:
+            progress(batch_index, total_batches, losses[-1])
     if not losses:
         raise ValueError("训练数据不能为空")
     return sum(losses) / len(losses)
@@ -125,13 +129,14 @@ def run_training(
     reconstruction_weight: float = 0.25,
     image_size: int = 64,
     seed: int = 7,
+    progress: Callable[[str], None] | None = None,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
     if epochs <= 0 or batch_size <= 0:
         raise ValueError("训练轮数和批量大小必须为正数")
     torch.manual_seed(seed)
     env_config = EnvConfig(image_size=image_size)
-    samples = collect_trajectories(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, guided_fraction=0.7)
+    samples = collect_trajectories(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, guided_fraction=0.7, progress=(lambda done, total: progress(f"采集轨迹: {done}/{total}") if progress is not None and (done == total or done % max(1, total // 20) == 0) else None))
     dataset = PushTJEPADataset(samples, horizon=4)
     validation_size = max(1, len(dataset) // 10)
     train_size = len(dataset) - validation_size
@@ -149,12 +154,15 @@ def run_training(
     checkpoint = result / "model.pt"
     config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size}
     for epoch in range(1, epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight)
+        batch_progress = lambda current, total, loss: progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}") if progress is not None and (current == total or current % max(1, total // 10) == 0) else None
+        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, batch_progress)
         validation_loss = validate(model, validation_loader)
         history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss})
         if validation_loss < best_validation:
             best_validation = validation_loss
             save_checkpoint(checkpoint, model, config, {"best_validation_mse": best_validation, "epoch": epoch})
+        if progress is not None:
+            progress(f"Epoch {epoch}/{epochs} 完成 train={train_loss:.5f} val={validation_loss:.5f} best={best_validation:.5f}")
     (result / "history.json").write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     return checkpoint
 
@@ -178,7 +186,7 @@ def main() -> None:
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.seed,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.seed, print,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 

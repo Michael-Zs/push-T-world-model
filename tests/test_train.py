@@ -49,3 +49,10 @@ def test_loading_pre_decoder_checkpoint_keeps_planning_weights(tmp_path):
     torch.save({"model_state": state, "config": {}, "metrics": {}}, path)
     info = load_checkpoint(path, JEPAModel())
     assert info["decoder_available"] is False
+
+
+def test_training_reports_collection_and_epoch_progress(tmp_path):
+    messages: list[str] = []
+    run_training(tmp_path, trajectories=2, steps=8, epochs=1, batch_size=2, seed=2, progress=messages.append)
+    assert any("采集轨迹" in message for message in messages)
+    assert any("Epoch 1/1" in message for message in messages)
