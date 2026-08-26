@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 
 from .config import EnvConfig, ModelConfig
-from .dataset import PushTJEPADataset, collect_trajectories
+from .dataset import PushTJEPADataset, collect_trajectories, collect_trajectories_with_stats
 from .model import JEPAModel
 
 
@@ -137,7 +137,7 @@ def run_training(
         raise ValueError("训练轮数和批量大小必须为正数")
     torch.manual_seed(seed)
     env_config = EnvConfig(image_size=image_size)
-    samples = collect_trajectories(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, guided_fraction=0.7, progress=(lambda done, total: progress(f"采集轨迹: {done}/{total}") if progress is not None and (done == total or done % max(1, total // 20) == 0) else None))
+    samples, collection_stats = collect_trajectories_with_stats(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, progress=(lambda done, total: progress(f"采集轨迹: {done}/{total}") if progress is not None and (done == total or done % max(1, total // 20) == 0) else None))
     dataset = PushTJEPADataset(samples, horizon=4)
     validation_size = max(1, len(dataset) // 10)
     train_size = len(dataset) - validation_size
@@ -151,6 +151,9 @@ def run_training(
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=result / "tensorboard")
+    writer.add_scalar("data/effective_step_rate", collection_stats.effective_step_rate, 0)
+    writer.add_scalar("data/mean_translation", collection_stats.mean_translation, 0)
+    writer.add_scalar("data/mean_rotation", collection_stats.mean_rotation, 0)
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"

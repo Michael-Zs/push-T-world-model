@@ -21,6 +21,13 @@ class Trajectory:
     actions: torch.Tensor
 
 
+@dataclass(frozen=True)
+class CollectionStats:
+    effective_step_rate: float
+    mean_translation: float
+    mean_rotation: float
+
+
 def collect_trajectories(
     env_config: EnvConfig | None = None,
     trajectories: int = 5_000,
@@ -64,6 +71,43 @@ def collect_trajectories(
         if progress is not None:
             progress(len(result), trajectories)
     return result
+
+
+def collect_trajectories_with_stats(
+    env_config: EnvConfig | None = None,
+    trajectories: int = 5_000,
+    steps: int = 64,
+    seed: int = 7,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[list[Trajectory], CollectionStats]:
+    """采集平衡的无接触、平移与偏心旋转轨迹，并返回有效样本统计。"""
+    if trajectories <= 0 or steps <= 0:
+        raise ValueError("轨迹数量和每条轨迹步数必须为正数")
+    rng = np.random.default_rng(seed)
+    result: list[Trajectory] = []
+    effective = 0; total = 0; translation = 0.0; rotation = 0.0
+    for index in range(trajectories):
+        env = PushTEnv(config=env_config, seed=int(rng.integers(0, 2**31 - 1)))
+        env.reset()
+        mode = index % 5
+        direction = rng.normal(size=2).astype(np.float32); direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        perpendicular = np.array([-direction[1], direction[0]], dtype=np.float32)
+        if mode:
+            offset = 0.0 if mode in (1, 2) else float(rng.choice([-1.0, 1.0])) * 0.065
+            object_position = np.array([0.5, 0.5], dtype=np.float32)
+            pusher = object_position - direction * 0.17 + perpendicular * offset
+            env.set_state(pusher, object_position, float(rng.uniform(-np.pi, np.pi)))
+        images = [env.render()]; actions: list[np.ndarray] = []
+        for _ in range(steps):
+            before = env.state
+            action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32) if mode == 0 else np.clip(direction + rng.normal(0.0, 0.08, 2), -1, 1).astype(np.float32)
+            image, after = env.step(action)
+            move = float(np.linalg.norm(after.object_position - before.object_position)); turn = abs(after.object_angle - before.object_angle)
+            effective += move > 1e-4 or turn > 1e-4; total += 1; translation += move; rotation += turn
+            images.append(image); actions.append(action)
+        result.append(Trajectory(torch.from_numpy(np.stack(images)).to(torch.uint8), torch.from_numpy(np.stack(actions)).to(torch.float32)))
+        if progress is not None: progress(index + 1, trajectories)
+    return result, CollectionStats(effective / total, translation / trajectories, rotation / trajectories)
 
 
 class PushTJEPADataset(Dataset[dict[str, torch.Tensor]]):

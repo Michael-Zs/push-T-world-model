@@ -1,7 +1,7 @@
 import torch
 
 from push_t_jepa.config import EnvConfig
-from push_t_jepa.dataset import PushTJEPADataset, collect_trajectories
+from push_t_jepa.dataset import PushTJEPADataset, collect_trajectories, collect_trajectories_with_stats
 
 
 def test_collected_trajectories_are_seed_deterministic():
@@ -17,3 +17,10 @@ def test_dataset_returns_normalized_action_conditioned_sample():
     assert sample["actions"].shape == (4, 2)
     assert sample["future_image"].shape == (3, 64, 64)
     assert sample["future_image"].max() <= 1.0
+
+
+def test_balanced_collector_generates_many_effective_pushes():
+    _, stats = collect_trajectories_with_stats(trajectories=30, steps=32, seed=5)
+    assert stats.effective_step_rate >= 0.35
+    assert stats.mean_translation > 0.01
+    assert stats.mean_rotation > 0.01
