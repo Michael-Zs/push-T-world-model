@@ -65,3 +65,10 @@ def test_goal_encoder_ignores_blue_pusher_pixels():
 def test_pose_head_predicts_push_t_state_shape_from_spatial_latent():
     model = JEPAModel()
     assert model.predict_pose(torch.rand(2, 64, 8, 8)).shape == (2, 6)
+
+
+def test_pose_head_preserves_spatial_position_information():
+    model = JEPAModel()
+    first = torch.zeros(1, 64, 8, 8); first[:, 0, 1, 1] = 1
+    second = torch.zeros(1, 64, 8, 8); second[:, 0, 6, 6] = 1
+    assert not torch.allclose(model.predict_pose(first), model.predict_pose(second))

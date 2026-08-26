@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import warnings
 from pathlib import Path
 from typing import Callable, Iterable
@@ -136,12 +137,17 @@ def run_training(
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
     image_size: int = 64,
+    threads: int | None = None,
     seed: int = 7,
     progress: Callable[[str], None] | None = None,
 ) -> Path:
     """训练并保存验证损失最优的 CPU JEPA 检查点。"""
     if epochs <= 0 or batch_size <= 0:
         raise ValueError("训练轮数和批量大小必须为正数")
+    worker_threads = threads if threads is not None else (os.cpu_count() or 1)
+    if worker_threads <= 0:
+        raise ValueError("训练线程数必须为正数")
+    torch.set_num_threads(worker_threads)
     torch.manual_seed(seed)
     env_config = EnvConfig(image_size=image_size)
     samples, collection_stats = collect_trajectories_with_stats(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, progress=(lambda done, total: progress(f"采集轨迹: {done}/{total}") if progress is not None and (done == total or done % max(1, total // 20) == 0) else None))
@@ -164,7 +170,7 @@ def run_training(
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
-    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size}
+    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size, "threads": worker_threads}
     for epoch in range(1, epochs + 1):
         def batch_progress(current: int, total: int, loss: float) -> None:
             global_step = (epoch - 1) * total + current
@@ -212,10 +218,11 @@ def main() -> None:
     parser.add_argument("--variance-weight", type=float, default=0.1, help="反坍塌方差正则权重")
     parser.add_argument("--reconstruction-weight", type=float, default=0.25, help="图像解码重建损失权重")
     parser.add_argument("--image-size", type=int, default=64, help="环境、模型与 decoder 共用的正方形图像尺寸")
+    parser.add_argument("--threads", type=int, default=None, help="PyTorch CPU 计算线程数，默认使用所有逻辑核")
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.seed, print,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.threads, args.seed, print,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 

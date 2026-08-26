@@ -82,7 +82,8 @@ class JEPAModel(nn.Module):
         self.target_encoder.requires_grad_(False)
         self.target_encoder.eval()
         self.predictor = SpatialPredictor(self.config.embedding_dim, self.config.action_horizon)
-        self.pose_head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(self.config.embedding_dim, 32), nn.ReLU(), nn.Linear(32, 6))
+        pose_features = self.config.embedding_dim * self.config.spatial_size * self.config.spatial_size
+        self.pose_head = nn.Sequential(nn.Flatten(), nn.Linear(pose_features, 128), nn.ReLU(), nn.Linear(128, 6))
         self.decoder = ImageDecoder(self.config.embedding_dim, self.config.image_size)
 
     def forward(
