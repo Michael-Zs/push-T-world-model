@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class EnvConfig:
     """Push-T 环境参数。"""
 
-    image_size: int = 256
+    image_size: int = 64
     arena_size: float = 1.0
     max_action: float = 0.08
     physics_dt: float = 1 / 240
