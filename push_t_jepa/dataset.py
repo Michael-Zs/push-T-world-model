@@ -19,6 +19,7 @@ class Trajectory:
 
     images: torch.Tensor
     actions: torch.Tensor
+    states: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ def collect_trajectories(
     result: list[Trajectory] = []
     for _ in range(trajectories):
         env = PushTEnv(config=env_config, seed=int(rng.integers(0, 2**31 - 1)))
-        images = [env.reset()]
+        images = [env.reset()]; states = [_state_vector(env)]
         actions: list[np.ndarray] = []
         for _ in range(steps):
             if rng.random() < guided_fraction:
@@ -62,10 +63,12 @@ def collect_trajectories(
             image, _ = env.step(action)
             actions.append(action)
             images.append(image)
+            states.append(_state_vector(env))
         result.append(
             Trajectory(
                 images=torch.from_numpy(np.stack(images)).to(torch.uint8),
                 actions=torch.from_numpy(np.stack(actions)).to(torch.float32),
+                states=torch.from_numpy(np.stack(states)).to(torch.float32),
             )
         )
         if progress is not None:
@@ -97,7 +100,7 @@ def collect_trajectories_with_stats(
             object_position = np.array([0.5, 0.5], dtype=np.float32)
             pusher = object_position - direction * 0.17 + perpendicular * offset
             env.set_state(pusher, object_position, float(rng.uniform(-np.pi, np.pi)))
-        images = [env.render()]; actions: list[np.ndarray] = []
+        images = [env.render()]; states = [_state_vector(env)]; actions: list[np.ndarray] = []
         for _ in range(steps):
             before = env.state
             action = rng.uniform(-1.0, 1.0, size=2).astype(np.float32) if mode == 0 else np.clip(direction + rng.normal(0.0, 0.08, 2), -1, 1).astype(np.float32)
@@ -105,7 +108,8 @@ def collect_trajectories_with_stats(
             move = float(np.linalg.norm(after.object_position - before.object_position)); turn = abs(after.object_angle - before.object_angle)
             effective += move > 1e-4 or turn > 1e-4; total += 1; translation += move; rotation += turn
             images.append(image); actions.append(action)
-        result.append(Trajectory(torch.from_numpy(np.stack(images)).to(torch.uint8), torch.from_numpy(np.stack(actions)).to(torch.float32)))
+            states.append(_state_vector(env))
+        result.append(Trajectory(torch.from_numpy(np.stack(images)).to(torch.uint8), torch.from_numpy(np.stack(actions)).to(torch.float32), torch.from_numpy(np.stack(states)).to(torch.float32)))
         if progress is not None: progress(index + 1, trajectories)
     return result, CollectionStats(effective / total, translation / trajectories, rotation / trajectories)
 
@@ -120,7 +124,7 @@ class PushTJEPADataset(Dataset[dict[str, torch.Tensor]]):
         self._horizon = horizon
         self._indices: list[tuple[int, int]] = []
         for trajectory_index, trajectory in enumerate(trajectories):
-            if trajectory.images.ndim != 4 or trajectory.actions.ndim != 2:
+            if trajectory.images.ndim != 4 or trajectory.actions.ndim != 2 or trajectory.states.ndim != 2:
                 raise ValueError("轨迹图像或动作张量形状无效")
             if trajectory.images.shape[0] != trajectory.actions.shape[0] + 1:
                 raise ValueError("轨迹图像数量必须比动作数量多一")
@@ -140,8 +144,15 @@ class PushTJEPADataset(Dataset[dict[str, torch.Tensor]]):
             "image": self._normalize_image(trajectory.images[time_index]),
             "actions": trajectory.actions[time_index:future_index].clone(),
             "future_image": self._normalize_image(trajectory.images[future_index]),
+            "state": trajectory.states[time_index].clone(),
+            "future_state": trajectory.states[future_index].clone(),
         }
 
     @staticmethod
     def _normalize_image(image: torch.Tensor) -> torch.Tensor:
         return image.permute(2, 0, 1).to(torch.float32).div(255.0)
+
+
+def _state_vector(env: PushTEnv) -> np.ndarray:
+    state = env.state
+    return np.asarray((*state.pusher, *state.object_position, np.sin(state.object_angle), np.cos(state.object_angle)), dtype=np.float32)

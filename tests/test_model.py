@@ -60,3 +60,8 @@ def test_goal_encoder_ignores_blue_pusher_pixels():
     image[:, :, 30:35, 30:35] = torch.tensor([40, 120, 220]).view(1, 3, 1, 1) / 255
     background = torch.tensor((245 / 255, 247 / 255, 250 / 255)).view(1, 3, 1, 1).expand_as(image)
     assert torch.allclose(model.encode_goal(image), model.encode_goal(background))
+
+
+def test_pose_head_predicts_push_t_state_shape_from_spatial_latent():
+    model = JEPAModel()
+    assert model.predict_pose(torch.rand(2, 64, 8, 8)).shape == (2, 6)

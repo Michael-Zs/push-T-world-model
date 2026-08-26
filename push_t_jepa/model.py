@@ -82,6 +82,7 @@ class JEPAModel(nn.Module):
         self.target_encoder.requires_grad_(False)
         self.target_encoder.eval()
         self.predictor = SpatialPredictor(self.config.embedding_dim, self.config.action_horizon)
+        self.pose_head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(self.config.embedding_dim, 32), nn.ReLU(), nn.Linear(32, 6))
         self.decoder = ImageDecoder(self.config.embedding_dim, self.config.image_size)
 
     def forward(
@@ -129,6 +130,13 @@ class JEPAModel(nn.Module):
         if embedding.ndim != 4 or tuple(embedding.shape[1:]) != expected:
             raise ValueError("待解码 embedding 形状无效")
         return self.decoder(embedding)
+
+    def predict_pose(self, embedding: torch.Tensor) -> torch.Tensor:
+        """从空间 latent 估计推杆与 T 的几何状态。"""
+        expected = (self.config.embedding_dim, self.config.spatial_size, self.config.spatial_size)
+        if embedding.ndim != 4 or tuple(embedding.shape[1:]) != expected:
+            raise ValueError("待预测位姿的 embedding 形状无效")
+        return self.pose_head(embedding)
 
     @torch.no_grad()
     def update_target_encoder(self, momentum: float) -> None:

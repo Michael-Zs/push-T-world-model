@@ -28,6 +28,11 @@ class _DeterministicPredictor(nn.Module):
     def encode_goal_from_latent(self, latent):
         return latent
 
+    def predict_pose(self, latent):
+        pose = torch.zeros((latent.shape[0], 6), device=latent.device)
+        pose[:, 2] = latent[:, 0].mean(dim=(1, 2))
+        return pose
+
     def predict_from_context(self, context, actions):
         return context + actions[:, :, 0].mean(dim=1, keepdim=True).unsqueeze(-1).unsqueeze(-1)
 

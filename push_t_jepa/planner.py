@@ -28,7 +28,7 @@ class CEMPlanner:
         target = self._image_tensor(target_image, device)
         previous_mode = self.model.training
         self.model.eval()
-        target_embedding = self.model.encode_goal(target)
+        target_pose = self.model.predict_pose(self.model.encode_target(target))[:, 2:]
         context = self.model.encode_context(current).repeat(self.config.population, 1, 1, 1)
         mean = np.zeros((self.config.horizon, 2), dtype=np.float32)
         std = np.ones_like(mean)
@@ -41,8 +41,8 @@ class CEMPlanner:
             ).astype(np.float32)
             actions = torch.from_numpy(candidates).to(device)
             terminal = self._predict_terminal_embeddings(context, actions)
-            terminal_goal = self.model.encode_goal_from_latent(terminal)
-            embedding_cost = (terminal_goal - target_embedding).square().sum(dim=(1, 2, 3))
+            terminal_pose = self.model.predict_pose(terminal)[:, 2:]
+            embedding_cost = (terminal_pose - target_pose).square().sum(dim=1)
             action_cost = 1e-3 * actions.square().sum(dim=(1, 2))
             costs = (embedding_cost + action_cost).cpu().numpy()
             elite_indices = np.argpartition(costs, self.config.elite_count - 1)[: self.config.elite_count]

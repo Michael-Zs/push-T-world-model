@@ -16,6 +16,8 @@ def test_dataset_returns_normalized_action_conditioned_sample():
     assert sample["image"].shape == (3, 64, 64)
     assert sample["actions"].shape == (4, 2)
     assert sample["future_image"].shape == (3, 64, 64)
+    assert sample["state"].shape == (6,)
+    assert sample["future_state"].shape == (6,)
     assert sample["future_image"].max() <= 1.0
 
 
