@@ -106,6 +106,16 @@ class JEPAModel(nn.Module):
         self._validate_images(image, "目标图像")
         return torch.nn.functional.normalize(self.target_encoder(image), dim=1)
 
+    @torch.no_grad()
+    def encode_goal(self, image: torch.Tensor) -> torch.Tensor:
+        """编码只含 T 物体的目标，忽略任务无关的蓝色推杆位置。"""
+        return self.encode_target(self._mask_pusher(image))
+
+    @torch.no_grad()
+    def encode_goal_from_latent(self, latent: torch.Tensor) -> torch.Tensor:
+        """将预测的完整 latent 解码后，投影到 T 物体目标空间。"""
+        return self.encode_goal(self.decode(latent))
+
     def predict_from_context(self, context: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         expected = (self.config.embedding_dim, self.config.spatial_size, self.config.spatial_size)
         if tuple(context.shape[1:]) != expected:
@@ -135,3 +145,9 @@ class JEPAModel(nn.Module):
         expected = (batch_size, self.config.action_horizon, 2)
         if tuple(actions.shape) != expected:
             raise ValueError(f"动作必须是形状为 {expected} 的张量")
+
+    def _mask_pusher(self, image: torch.Tensor) -> torch.Tensor:
+        red, green, blue = image.unbind(dim=1)
+        pusher = (blue > green + 45 / 255) & (blue > red + 70 / 255)
+        background = torch.tensor((245 / 255, 247 / 255, 250 / 255), dtype=image.dtype, device=image.device).view(1, 3, 1, 1)
+        return torch.where(pusher.unsqueeze(1), background, image)

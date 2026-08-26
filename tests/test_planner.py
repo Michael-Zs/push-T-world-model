@@ -22,6 +22,12 @@ class _DeterministicPredictor(nn.Module):
     def encode_target(self, image):
         return torch.ones((image.shape[0], 1, 8, 8), device=image.device)
 
+    def encode_goal(self, image):
+        return self.encode_target(image)
+
+    def encode_goal_from_latent(self, latent):
+        return latent
+
     def predict_from_context(self, context, actions):
         return context + actions[:, :, 0].mean(dim=1, keepdim=True).unsqueeze(-1).unsqueeze(-1)
 

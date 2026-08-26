@@ -52,3 +52,11 @@ def test_decoder_supports_configured_256_pixel_images():
 def test_decoder_rejects_global_embedding_without_spatial_layout():
     with pytest.raises(ValueError, match="embedding"):
         JEPAModel().decode(torch.rand(1, 64))
+
+
+def test_goal_encoder_ignores_blue_pusher_pixels():
+    model = JEPAModel()
+    image = torch.tensor((245 / 255, 247 / 255, 250 / 255)).view(1, 3, 1, 1).expand(1, 3, 64, 64).clone()
+    image[:, :, 30:35, 30:35] = torch.tensor([40, 120, 220]).view(1, 3, 1, 1) / 255
+    background = torch.tensor((245 / 255, 247 / 255, 250 / 255)).view(1, 3, 1, 1).expand_as(image)
+    assert torch.allclose(model.encode_goal(image), model.encode_goal(background))
