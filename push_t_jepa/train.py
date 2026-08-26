@@ -154,6 +154,7 @@ def run_training(
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
     image_size: int = 64,
+    action_horizon: int = 4,
     threads: int | None = None,
     seed: int = 7,
     progress: Callable[[str], None] | None = None,
@@ -168,7 +169,7 @@ def run_training(
     torch.manual_seed(seed)
     env_config = EnvConfig(image_size=image_size)
     samples, collection_stats = collect_trajectories_with_stats(env_config=env_config, trajectories=trajectories, steps=steps, seed=seed, progress=(lambda done, total: progress(f"采集轨迹: {done}/{total}") if progress is not None and (done == total or done % max(1, total // 20) == 0) else None))
-    dataset = PushTJEPADataset(samples, horizon=4)
+    dataset = PushTJEPADataset(samples, horizon=action_horizon)
     validation_size = max(1, len(dataset) // 10)
     train_size = len(dataset) - validation_size
     if train_size <= 0:
@@ -176,7 +177,7 @@ def run_training(
     train_set, validation_set = random_split(dataset, [train_size, validation_size], generator=torch.Generator().manual_seed(seed))
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed))
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False)
-    model = JEPAModel(ModelConfig(image_size=image_size))
+    model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
@@ -187,7 +188,7 @@ def run_training(
     history: list[dict[str, float]] = []
     best_validation = float("inf")
     checkpoint = result / "model.pt"
-    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size, "threads": worker_threads}
+    config = {"seed": seed, "trajectories": trajectories, "steps": steps, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate, "variance_weight": variance_weight, "reconstruction_weight": reconstruction_weight, "image_size": image_size, "action_horizon": action_horizon, "threads": worker_threads}
     for epoch in range(1, epochs + 1):
         def batch_progress(current: int, total: int, loss: float) -> None:
             global_step = (epoch - 1) * total + current
@@ -238,11 +239,12 @@ def main() -> None:
     parser.add_argument("--variance-weight", type=float, default=0.1, help="反坍塌方差正则权重")
     parser.add_argument("--reconstruction-weight", type=float, default=0.25, help="图像解码重建损失权重")
     parser.add_argument("--image-size", type=int, default=64, help="环境、模型与 decoder 共用的正方形图像尺寸")
+    parser.add_argument("--action-horizon", type=int, default=4, help="JEPA 直接预测的动作步数；设为 8 可避免 CEM 两段递推")
     parser.add_argument("--threads", type=int, default=None, help="PyTorch CPU 计算线程数，默认使用所有逻辑核")
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.threads, args.seed, print,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.action_horizon, args.threads, args.seed, print,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 

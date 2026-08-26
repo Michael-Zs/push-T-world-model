@@ -23,7 +23,8 @@ def run_demo(checkpoint: str | Path, output: str | Path, seed: int = 7, steps: i
     checkpoint_data = torch.load(checkpoint, map_location="cpu", weights_only=False)
     checkpoint_config = checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
     image_size = int(checkpoint_config.get("image_size", 64))
-    model = JEPAModel(ModelConfig(image_size=image_size))
+    action_horizon = int(checkpoint_config.get("action_horizon", 4))
+    model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
     load_checkpoint(checkpoint, model)
     env = PushTEnv(config=EnvConfig(image_size=image_size), seed=seed)
     current = env.reset()

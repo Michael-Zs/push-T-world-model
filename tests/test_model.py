@@ -35,6 +35,12 @@ def test_jepa_rejects_wrong_action_horizon():
         )
 
 
+def test_jepa_supports_eight_step_action_prediction():
+    model = JEPAModel(ModelConfig(action_horizon=8))
+    prediction, _ = model(torch.rand(1, 3, 64, 64), torch.rand(1, 8, 2), torch.rand(1, 3, 64, 64))
+    assert prediction.shape == (1, 64, 8, 8)
+
+
 def test_decoder_reconstructs_rgb_image_shape_from_spatial_latent():
     model = JEPAModel()
     reconstruction = model.decode(torch.rand(2, 64, 8, 8))
