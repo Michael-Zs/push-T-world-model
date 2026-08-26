@@ -42,8 +42,9 @@ def train_epoch(
             future_state = batch["future_state"].to(_model_device(model))
             pose_loss = functional.mse_loss(model.predict_pose(model.encode_context(image)), state)
             pose_loss = pose_loss + functional.mse_loss(model.predict_pose(prediction), future_state)
-        reconstruction_loss = _foreground_reconstruction_loss(model.decode(model.encode_context(image)), image)
-        prediction_reconstruction_loss = _foreground_reconstruction_loss(model.decode(prediction), future_image)
+        # decoder 仅用于可视化；阻断其梯度，避免像素重建牺牲 JEPA 动力学表征。
+        reconstruction_loss = _foreground_reconstruction_loss(model.decode(model.encode_context(image).detach()), image)
+        prediction_reconstruction_loss = _foreground_reconstruction_loss(model.decode(prediction.detach()), future_image)
         loss = embedding_loss + pose_loss + reconstruction_weight * (reconstruction_loss + prediction_reconstruction_loss)
         loss.backward()
         optimizer.step()
