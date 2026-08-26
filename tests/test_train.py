@@ -1,5 +1,6 @@
 import math
 
+import pytest
 import torch
 
 from push_t_jepa.model import JEPAModel, VAEJEPAModel
@@ -74,6 +75,13 @@ def test_full_vae_training_writes_a_vae_checkpoint(tmp_path):
     )
     saved = torch.load(checkpoint, weights_only=False)
     assert saved["config"]["model_type"] == "vae_jepa"
+
+
+def test_loading_a_different_model_type_reports_a_clear_error(tmp_path):
+    path = tmp_path / "jepa.pt"
+    save_checkpoint(path, JEPAModel(), {"model_type": "jepa"}, {})
+    with pytest.raises(ValueError, match="模型类型不兼容"):
+        load_checkpoint(path, VAEJEPAModel())
 
 
 def test_pose_validation_returns_finite_error_for_labeled_batch():

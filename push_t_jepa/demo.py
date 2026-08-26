@@ -9,9 +9,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .config import EnvConfig, ModelConfig
+from .config import EnvConfig
 from .env import PushTEnv
-from .model import JEPAModel
+from .model import model_from_checkpoint_config
 from .planner import CEMPlanner
 from .train import load_checkpoint
 
@@ -33,9 +33,8 @@ def run_demo(
     checkpoint_config = (
         checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
     )
-    image_size = int(checkpoint_config.get("image_size", 64))
-    action_horizon = int(checkpoint_config.get("action_horizon", 4))
-    model = JEPAModel(ModelConfig(image_size=image_size, action_horizon=action_horizon))
+    model = model_from_checkpoint_config(checkpoint_config)
+    image_size = model.config.image_size
     load_checkpoint(checkpoint, model)
     env = PushTEnv(config=EnvConfig(image_size=image_size), seed=seed)
     current = env.reset()

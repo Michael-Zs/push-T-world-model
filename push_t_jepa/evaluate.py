@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+import torch
 
 from .config import EnvConfig
 from .demo import run_demo
@@ -29,6 +30,9 @@ def run_evaluation(checkpoint: str | Path, output: str | Path, seeds: Iterable[i
         raise ValueError("执行步数必须为正数")
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
+    checkpoint_data = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    checkpoint_config = checkpoint_data.get("config", {}) if isinstance(checkpoint_data, dict) else {}
+    model_type = checkpoint_config.get("model_type", "jepa")
     planner_rows: list[dict[str, float | int]] = []
     random_rows: list[dict[str, float | int]] = []
     for seed in seeds:
@@ -37,6 +41,7 @@ def run_evaluation(checkpoint: str | Path, output: str | Path, seeds: Iterable[i
         planner_rows.append(metrics)
         random_rows.append(_random_baseline(seed, steps))
     payload = {
+        "model_type": model_type,
         "steps": steps,
         "planner": {"runs": planner_rows, "summary": summarize_distances([(float(row["initial_geometric_distance"]), float(row["final_geometric_distance"])) for row in planner_rows])},
         "random": {"runs": random_rows, "summary": summarize_distances([(float(row["initial_geometric_distance"]), float(row["final_geometric_distance"])) for row in random_rows])},

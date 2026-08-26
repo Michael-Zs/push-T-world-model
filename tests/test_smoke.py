@@ -13,3 +13,10 @@ def test_smoke_training_and_demo_write_reusable_artifacts(tmp_path):
     assert Image.open(output / "rollout.gif").size == (192, 64)
     metrics = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
     assert "final_embedding_distance" in metrics
+
+
+def test_vae_smoke_training_then_demo(tmp_path):
+    checkpoint = run_smoke_training(tmp_path / "vae", seed=1, vae=True)
+    output = run_demo(checkpoint, tmp_path / "vae-demo", seed=1, steps=1)
+    assert output.is_dir()
+    assert (output / "rollout.gif").is_file()

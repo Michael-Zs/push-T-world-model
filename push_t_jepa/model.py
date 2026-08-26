@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 
 import torch
 from torch import nn
@@ -219,3 +220,15 @@ class VAEJEPAModel(JEPAModel):
         mean, logvar = self.encode_distribution(image)
         context = torch.nn.functional.normalize(self.sample_latent(mean, logvar), dim=1)
         return self.predict_from_context(context, actions), self.encode_target(future_image), mean, logvar
+
+
+def model_from_checkpoint_config(config: Mapping[str, object]) -> JEPAModel:
+    """根据检查点配置构造相应模型；缺失类型字段的旧检查点视为普通 JEPA。"""
+    model_type = config.get("model_type", "jepa")
+    if model_type not in {"jepa", "vae_jepa"}:
+        raise ValueError(f"不支持的检查点模型类型: {model_type}")
+    model_config = ModelConfig(
+        image_size=int(config.get("image_size", 64)),
+        action_horizon=int(config.get("action_horizon", 4)),
+    )
+    return VAEJEPAModel(model_config) if model_type == "vae_jepa" else JEPAModel(model_config)

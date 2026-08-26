@@ -61,3 +61,20 @@ python -m push_t_jepa.demo --checkpoint artifacts/train/model.pt --output artifa
 ```
 
 训练数据中 70% 的动作朝 T 物体移动以提高接触样本比例，30% 保持随机探索。训练损失是归一化 embedding 的预测 MSE 加方差下界正则；后者用于抑制所有图像被编码为同一个向量的坍塌。
+
+## VAE-JEPA 对照实验
+
+`--vae` 会把上下文编码器替换为空间 VAE：它为每个 `8×8` latent 位置输出均值和方差，训练时从该分布采样，并联合优化 JEPA、位姿、前景重建与 KL 正则。EMA 目标编码器始终使用均值，因而规划与评估是确定性的。KL 权重会在前几轮从零线性升到设定值。
+
+```bash
+python -m push_t_jepa.train \
+  --vae --output artifacts/train-vae-h8 --seed 7 \
+  --trajectories 1000 --steps 64 --epochs 20 --batch-size 128 \
+  --threads 10 --action-horizon 8 \
+  --kl-weight 0.001 --kl-warmup-epochs 5
+python -m push_t_jepa.evaluate \
+  --checkpoint artifacts/train-vae-h8/model.pt \
+  --output artifacts/eval-vae-h8 --steps 80
+```
+
+TensorBoard 会额外给出 `vae/kl_loss`、`vae/reconstruction_loss`、`validation/pusher_pose_mse` 与 `validation/t_pose_mse`。`demo` 和 `evaluate` 会从 checkpoint 的 `model_type` 自动选择 VAE 或普通 JEPA，旧 checkpoint 没有该字段时仍按普通 JEPA 处理；两种模型参数不可以用 `--resume` 互相恢复。

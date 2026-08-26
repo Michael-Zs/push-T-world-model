@@ -156,6 +156,23 @@ def validate_pose(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -
     return sum(losses) / len(losses)
 
 
+@torch.no_grad()
+def validate_pusher_pose(model: JEPAModel, loader: Iterable[dict[str, torch.Tensor]]) -> float:
+    """计算未来推杆二维位置的预测 MSE。"""
+    model.eval()
+    losses: list[float] = []
+    for batch in loader:
+        if "future_state" not in batch:
+            continue
+        image, actions, future_image = _batch_to_device(batch, _model_device(model))
+        prediction = model(image, actions, future_image)[0]
+        target_pose = batch["future_state"].to(_model_device(model))[:, :2]
+        losses.append(float(functional.mse_loss(model.predict_pose(prediction)[:, :2], target_pose).cpu()))
+    if not losses:
+        return 0.0
+    return sum(losses) / len(losses)
+
+
 def save_checkpoint(
     path: str | Path,
     model: JEPAModel,
@@ -176,6 +193,13 @@ def load_checkpoint(path: str | Path, model: JEPAModel, device: str = "cpu") -> 
     checkpoint = torch.load(source, map_location=device, weights_only=False)
     if not isinstance(checkpoint, dict) or "model_state" not in checkpoint:
         raise ValueError("检查点缺少模型参数")
+    checkpoint_config = checkpoint.get("config", {})
+    if not isinstance(checkpoint_config, dict):
+        raise ValueError("检查点配置无效")
+    checkpoint_type = checkpoint_config.get("model_type", "jepa")
+    expected_type = "vae_jepa" if isinstance(model, VAEJEPAModel) else "jepa"
+    if checkpoint_type != expected_type:
+        raise ValueError(f"检查点模型类型不兼容：检查点为 {checkpoint_type}，当前模型为 {expected_type}")
     incompatibility = model.load_state_dict(checkpoint["model_state"], strict=False)
     missing_non_decoder = [key for key in incompatibility.missing_keys if not key.startswith("decoder.")]
     if missing_non_decoder or incompatibility.unexpected_keys:
@@ -183,7 +207,7 @@ def load_checkpoint(path: str | Path, model: JEPAModel, device: str = "cpu") -> 
     decoder_available = not incompatibility.missing_keys
     if not decoder_available:
         warnings.warn("检查点不包含 decoder 参数：CEM 规划可继续，但 GIF 的预测解码栏未经训练；请重新训练以获得有效图像。", stacklevel=2)
-    return {"config": checkpoint.get("config", {}), "metrics": checkpoint.get("metrics", {}), "decoder_available": decoder_available}
+    return {"config": checkpoint_config, "metrics": checkpoint.get("metrics", {}), "decoder_available": decoder_available}
 
 
 def _model_device(model: JEPAModel) -> torch.device:
@@ -242,11 +266,7 @@ def run_training(
     validation_loader = DataLoader(validation_set, batch_size=batch_size, shuffle=False)
     model = (VAEJEPAModel if vae else JEPAModel)(ModelConfig(image_size=image_size, action_horizon=action_horizon))
     if resume_checkpoint is not None:
-        checkpoint_info = load_checkpoint(resume_checkpoint, model)
-        previous_type = checkpoint_info["config"].get("model_type", "jepa")
-        expected_type = "vae_jepa" if vae else "jepa"
-        if previous_type != expected_type:
-            raise ValueError(f"恢复检查点的模型类型为 {previous_type}，与当前 {expected_type} 不兼容")
+        load_checkpoint(resume_checkpoint, model)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     result = Path(output)
     result.mkdir(parents=True, exist_ok=True)
@@ -276,11 +296,13 @@ def run_training(
             train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, legacy_reconstruction, batch_progress)
         validation_loss = validate(model, validation_loader)
         pose_validation = validate_pose(model, validation_loader)
+        pusher_pose_validation = validate_pusher_pose(model, validation_loader)
         writer.add_scalar("train/epoch_loss", train_loss, epoch)
         writer.add_scalar("validation/mse", validation_loss, epoch)
         writer.add_scalar("validation/t_pose_mse", pose_validation, epoch)
+        writer.add_scalar("validation/pusher_pose_mse", pusher_pose_validation, epoch)
         selection_loss = validation_loss + pose_validation
-        history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss, "validation_t_pose_mse": pose_validation})
+        history.append({"epoch": epoch, "train_loss": train_loss, "validation_mse": validation_loss, "validation_t_pose_mse": pose_validation, "validation_pusher_pose_mse": pusher_pose_validation})
         if selection_loss < best_validation:
             best_validation = selection_loss
             save_checkpoint(checkpoint, model, config, {"best_validation_score": best_validation, "validation_mse": validation_loss, "validation_t_pose_mse": pose_validation, "epoch": epoch})
