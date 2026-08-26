@@ -25,6 +25,7 @@ def train_epoch(
     ema_momentum: float,
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
+    legacy_reconstruction: bool = False,
     progress: Callable[[int, int, float], None] | None = None,
 ) -> float:
     """运行一个 epoch，并返回平均 embedding MSE。"""
@@ -43,8 +44,12 @@ def train_epoch(
             pose_loss = functional.mse_loss(model.predict_pose(model.encode_context(image)), state)
             pose_loss = pose_loss + functional.mse_loss(model.predict_pose(prediction), future_state)
         # decoder 仅用于可视化；阻断其梯度，避免像素重建牺牲 JEPA 动力学表征。
-        reconstruction_loss = _foreground_reconstruction_loss(model.decode(model.encode_context(image).detach()), image)
-        prediction_reconstruction_loss = _foreground_reconstruction_loss(model.decode(prediction.detach()), future_image)
+        if legacy_reconstruction:
+            reconstruction_loss = functional.mse_loss(model.decode(model.encode_context(image)), image)
+            prediction_reconstruction_loss = functional.mse_loss(model.decode(prediction), future_image)
+        else:
+            reconstruction_loss = _foreground_reconstruction_loss(model.decode(model.encode_context(image).detach()), image)
+            prediction_reconstruction_loss = _foreground_reconstruction_loss(model.decode(prediction.detach()), future_image)
         loss = embedding_loss + pose_loss + reconstruction_weight * (reconstruction_loss + prediction_reconstruction_loss)
         loss.backward()
         optimizer.step()
@@ -165,6 +170,7 @@ def run_training(
     learning_rate: float = 3e-4,
     variance_weight: float = 0.1,
     reconstruction_weight: float = 0.25,
+    legacy_reconstruction: bool = False,
     image_size: int = 64,
     action_horizon: int = 4,
     threads: int | None = None,
@@ -210,7 +216,7 @@ def run_training(
             writer.add_scalar("train/batch_loss", loss, global_step)
             if progress is not None and (current == total or current % max(1, total // 10) == 0):
                 progress(f"Epoch {epoch}/{epochs} 批次 {current}/{total} loss={loss:.5f}")
-        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, batch_progress)
+        train_loss = train_epoch(model, train_loader, optimizer, 0.99, variance_weight, reconstruction_weight, legacy_reconstruction, batch_progress)
         validation_loss = validate(model, validation_loader)
         pose_validation = validate_pose(model, validation_loader)
         writer.add_scalar("train/epoch_loss", train_loss, epoch)
@@ -253,6 +259,7 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="Adam 学习率")
     parser.add_argument("--variance-weight", type=float, default=0.1, help="反坍塌方差正则权重")
     parser.add_argument("--reconstruction-weight", type=float, default=0.25, help="图像解码重建损失权重")
+    parser.add_argument("--legacy-reconstruction", action="store_true", help="使用最佳旧模型的普通 MSE 重建梯度训练方式")
     parser.add_argument("--image-size", type=int, default=64, help="环境、模型与 decoder 共用的正方形图像尺寸")
     parser.add_argument("--action-horizon", type=int, default=4, help="JEPA 直接预测的动作步数；设为 8 可避免 CEM 两段递推")
     parser.add_argument("--threads", type=int, default=None, help="PyTorch CPU 计算线程数，默认使用所有逻辑核")
@@ -260,7 +267,8 @@ def main() -> None:
     args = parser.parse_args()
     checkpoint = run_smoke_training(args.output, seed=args.seed) if args.smoke else run_training(
         args.output, args.trajectories, args.steps, args.epochs, args.batch_size,
-        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.image_size, args.action_horizon, args.threads, args.seed, print, args.resume,
+        args.learning_rate, args.variance_weight, args.reconstruction_weight, args.legacy_reconstruction,
+        args.image_size, args.action_horizon, args.threads, args.seed, print, args.resume,
     )
     print(f"训练完成，检查点位于: {checkpoint}")
 
