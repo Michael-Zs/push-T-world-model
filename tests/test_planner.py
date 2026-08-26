@@ -78,3 +78,23 @@ def test_goal_cost_uses_only_t_pose_coordinates():
     planner = CEMPlanner(_DeterministicPredictor(), seed=3)
     image = np.zeros((64, 64, 3), dtype=np.uint8)
     assert planner.goal_cost(image, image) == 1.0
+
+
+def test_oracle_cem_plan_has_bounded_action_sequence():
+    env = PushTEnv(config=EnvConfig(image_size=64), seed=4)
+    env.reset()
+    actions = CEMPlanner(JEPAModel(), CEMConfig(horizon=8, population=4, elite_count=2, iterations=1), seed=4).plan_oracle(
+        env, np.array([0.72, 0.62], dtype=np.float32), target_angle=0.45
+    )
+    assert actions.shape == (8, 2)
+    assert np.all(actions >= -1.0) and np.all(actions <= 1.0)
+
+
+def test_oracle_cem_can_select_no_op_at_current_goal():
+    env = PushTEnv(config=EnvConfig(image_size=64), seed=6)
+    env.reset()
+    state = env.state
+    actions = CEMPlanner(JEPAModel(), CEMConfig(horizon=8, population=4, elite_count=2, iterations=1), seed=6).plan_oracle(
+        env, state.object_position, target_angle=state.object_angle
+    )
+    assert np.allclose(actions, 0.0)

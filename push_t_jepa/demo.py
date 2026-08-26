@@ -23,6 +23,8 @@ def run_demo(
     steps: int = 12,
     stop_on_stall: bool = False,
     visual: bool = False,
+    oracle_cost: bool = False,
+    oracle_angle_weight: float = 0.25,
 ) -> Path:
     """以固定目标位姿进行滚动 CEM 规划，并写出 GIF 和指标 JSON。"""
     if steps < 0:
@@ -46,6 +48,7 @@ def run_demo(
     )
     target_image = target_env.render()
     target_position = target_env.state.object_position.copy()
+    target_angle = target_env.state.object_angle
     initial_distance = float(
         np.linalg.norm(env.state.object_position - target_position)
     )
@@ -85,7 +88,11 @@ def run_demo(
                 torch.from_numpy(sequence[: model.config.action_horizon]).unsqueeze(0),
             )
             predicted_image = _decoder_image(model.decode(predicted_embedding))
-        action = planner.next_action(real_frames[-1], target_image)
+        action = (
+            planner.next_action_oracle(env, target_image, target_position, target_angle, oracle_angle_weight)
+            if oracle_cost
+            else planner.next_action(real_frames[-1], target_image)
+        )
         frame, _ = env.step(action)
 
         if visual:
@@ -128,6 +135,8 @@ def run_demo(
     metrics = {
         "seed": seed,
         "steps": steps,
+        "oracle_cost": oracle_cost,
+        "oracle_angle_weight": oracle_angle_weight if oracle_cost else None,
         "initial_geometric_distance": initial_distance,
         "final_geometric_distance": float(
             np.linalg.norm(env.state.object_position - target_position)
@@ -180,6 +189,8 @@ def main() -> None:
         help="连续 8 步预测位姿无改善时提前停止（诊断选项）",
     )
     parser.add_argument("--visual", action="store_true")
+    parser.add_argument("--oracle-cost", action="store_true", help="使用真实仿真终点距离作为 CEM cost（oracle 对照，速度较慢）")
+    parser.add_argument("--oracle-angle-weight", type=float, default=0.25, help="oracle cost 中 T 朝向误差的权重")
     args = parser.parse_args()
     output = run_demo(
         args.checkpoint,
@@ -188,6 +199,8 @@ def main() -> None:
         steps=args.steps,
         stop_on_stall=args.stop_on_stall,
         visual=args.visual,
+        oracle_cost=args.oracle_cost,
+        oracle_angle_weight=args.oracle_angle_weight,
     )
     print(f"演示已写入: {output}")
 

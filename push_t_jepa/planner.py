@@ -29,16 +29,17 @@ class CEMPlanner:
         previous_mode = self.model.training
         self.model.eval()
         target_pose = self.model.predict_pose(self.model.encode_target(target))[:, 2:]
-        context = self.model.encode_context(current).repeat(self.config.population, 1, 1, 1)
+        context = self.model.encode_context(current).repeat(self.config.population + 1, 1, 1, 1)
         mean = np.zeros((self.config.horizon, 2), dtype=np.float32)
         std = np.ones_like(mean)
         best = mean.copy()
         for _ in range(self.config.iterations):
-            candidates = np.clip(
+            random_candidates = np.clip(
                 self._rng.normal(mean, std, size=(self.config.population, self.config.horizon, 2)),
                 -1.0,
                 1.0,
             ).astype(np.float32)
+            candidates = np.concatenate((np.zeros((1, self.config.horizon, 2), dtype=np.float32), random_candidates))
             actions = torch.from_numpy(candidates).to(device)
             terminal = self._predict_terminal_embeddings(context, actions)
             terminal_pose = self.model.predict_pose(terminal)[:, 2:]
@@ -69,6 +70,42 @@ class CEMPlanner:
         """尚未接触 T 时先靠近，接触后执行 CEM 的首个动作。"""
         approach = self.approach_action(current_image, target_image)
         return approach if approach is not None else self.plan(current_image, target_image)[0]
+
+    def next_action_oracle(self, env: PushTEnv, target_image: np.ndarray, target_position: np.ndarray, target_angle: float, angle_weight: float = 0.25) -> np.ndarray:
+        """用真实仿真终点位置与角度误差作为 CEM cost；仅用于 oracle 对照。"""
+        approach = self.approach_action(env.render(), target_image)
+        return approach if approach is not None else self.plan_oracle(env, target_position, target_angle, angle_weight)[0]
+
+    def plan_oracle(self, env: PushTEnv, target_position: np.ndarray, target_angle: float, angle_weight: float = 0.25) -> np.ndarray:
+        """在环境副本中执行候选动作，并最小化终点 T 的真实位置与朝向误差。"""
+        target = np.asarray(target_position, dtype=np.float32)
+        if target.shape != (2,) or not np.all(np.isfinite(target)):
+            raise ValueError("目标位置必须是两个有限数值")
+        if not np.isfinite(target_angle) or angle_weight < 0.0:
+            raise ValueError("目标角度必须有限，角度权重不能为负数")
+        mean = np.zeros((self.config.horizon, 2), dtype=np.float32)
+        std = np.ones_like(mean)
+        best = mean.copy()
+        for _ in range(self.config.iterations):
+            random_candidates = np.clip(self._rng.normal(mean, std, size=(self.config.population, self.config.horizon, 2)), -1.0, 1.0).astype(np.float32)
+            candidates = np.concatenate((np.zeros((1, self.config.horizon, 2), dtype=np.float32), random_candidates))
+            costs = np.asarray([self._oracle_cost(env, actions, target, target_angle, angle_weight) for actions in candidates])
+            elite = candidates[np.argpartition(costs, self.config.elite_count - 1)[: self.config.elite_count]]
+            mean = elite.mean(axis=0)
+            std = np.maximum(elite.std(axis=0), 0.05)
+            best = candidates[int(costs.argmin())]
+        return best
+
+    @staticmethod
+    def _oracle_cost(env: PushTEnv, actions: np.ndarray, target_position: np.ndarray, target_angle: float, angle_weight: float) -> float:
+        clone = PushTEnv(config=env.config, seed=0)
+        state = env.state
+        clone.set_state(state.pusher, state.object_position, state.object_angle)
+        for action in actions:
+            clone.step(action)
+        position_cost = float(np.square(clone.state.object_position - target_position).sum())
+        angle_cost = 1.0 - float(np.cos(clone.state.object_angle - target_angle))
+        return position_cost + angle_weight * angle_cost
 
     @torch.no_grad()
     def goal_cost(self, current_image: np.ndarray, target_image: np.ndarray) -> float:
