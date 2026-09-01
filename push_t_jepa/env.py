@@ -20,6 +20,21 @@ class PushTState:
         )
 
 
+class Target:
+    def __init__(self):
+        self._pose = np.array([0, 0])
+        self._angle = 0
+
+    def set(self, pose, angle):
+        self._pose = pose
+        self._angle = angle
+
+    def local_to_world(self, pose: pymunk.Vec2d):
+        c, s = np.cos(self._angle), np.sin(self._angle)
+        world_manual = np.array([[c, -s], [s, c]]) @ np.asarray(pose) + self._pose
+        return np.asarray(world_manual)
+
+
 class PushTEnv:
     _PUSHER_RADIUS = 0.045
 
@@ -27,6 +42,7 @@ class PushTEnv:
         self.config = config or EnvConfig()
         self._rng = np.random.default_rng(seed)
         self._build_space()
+        self.target = Target()
 
     def _build_space(self) -> None:
         self.space = pymunk.Space()
@@ -173,6 +189,19 @@ class PushTEnv:
         image = Image.new("RGB", (size, size), (245, 247, 250))
         draw = ImageDraw.Draw(image)
         draw.rectangle((1, 1, size - 2, size - 2), outline=(145, 155, 170), width=1)
+
+        # draw the target as green in the background
+        for shape in self.object_shapes:
+            world_vertices = [
+                self.target.local_to_world(vertex) for vertex in shape.get_vertices()
+            ]
+            draw.polygon(
+                [self._pixel(vertex) for vertex in world_vertices],
+                fill=(182, 228, 182),
+                outline=(66, 150, 80),
+            )
+
+        # draw the T block
         for shape in self.object_shapes:
             world_vertices = [
                 self.object_body.local_to_world(vertex)
@@ -183,6 +212,7 @@ class PushTEnv:
                 fill=(50, 55, 65),
                 outline=(20, 20, 25),
             )
+
         x, y = self._pixel(self.pusher_body.position)
         r = max(2, round(self._PUSHER_RADIUS * (size - 1)))
         draw.ellipse(

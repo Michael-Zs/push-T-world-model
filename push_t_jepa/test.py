@@ -1,12 +1,14 @@
 from .env import PushTEnv
 import cv2 as cv
 import numpy as np
+from PIL import Image
 
 
 def main() -> None:
     """以持续按键控制方式观察 Pymunk Push-T 的平移与旋转。"""
     t_env = PushTEnv()
     t_env.reset()
+    t_env.target.set((0.86, 0.5), 3)
     while True:
         action = np.zeros(2, dtype=np.float32)
         key = cv.waitKey(16) & 0xFF
@@ -21,6 +23,11 @@ def main() -> None:
         elif key == ord("q"):
             break
         img, stat = t_env.step(action)
+        img = Image.fromarray(img)
+        img = img.resize((1200, 1200), Image.Resampling.LANCZOS)
+        print(img.size)
+
+        img = np.asarray(img, dtype=np.uint8)
         view = cv.cvtColor(img, cv.COLOR_RGB2BGR)
         cv.putText(
             view,
